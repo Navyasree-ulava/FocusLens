@@ -7,7 +7,9 @@ export default defineConfig({
     name: 'FocusLens',
     description: 'Private, local-first insight into your browsing habits.',
     version: '0.1.0',
-    permissions: ['storage'],
+    minimum_chrome_version: '116',
+    permissions: ['storage', 'tabs', 'idle', 'alarms'],
+    incognito: 'not_allowed',
     action: {
       default_title: 'FocusLens',
     },
