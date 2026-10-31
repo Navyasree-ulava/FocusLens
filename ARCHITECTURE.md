@@ -31,6 +31,14 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 - **Persistence and reports:** Validated YouTube segments live in the local IndexedDB `youtube` store. Learning goals and video/channel rules live in `chrome.storage.local`. The popup calculates learning, entertainment, Shorts, paused, buffering, and browsing totals from stored records only.
 - **Privacy detail:** YouTube reports require locally storing video titles, channel names, and canonical video IDs/URLs. General browsing storage remains hostname-only. No YouTube data is uploaded.
 
+## Phase 4 dashboard
+
+- **Data source:** `entrypoints/dashboard/App.tsx` reads activity intervals, tracker state, website settings, YouTube segments, and YouTube settings from the same local IndexedDB and `chrome.storage.local` stores as the popup.
+- **Time windows:** Daily trend bars calculate interval overlap with local calendar-day bounds, which accounts for variable-length days. The current open website interval is included only up to the current time. YouTube queries include segments that overlap the selected window even if they began earlier.
+- **Reports:** Overview shows today's active time and intent totals, a seven-day usage trend, top websites, recent activity, and YouTube totals. Activity, Websites, and YouTube views expose the corresponding stored records and rankings. Empty datasets show explicit empty states.
+- **Charts:** Small, dependency-free CSS bars are used for the trend and intent breakdown; their values are derived directly from stored durations. No demo values are seeded.
+- **Navigation:** The popup opens the extension dashboard in a browser tab. The dashboard refreshes periodically while open.
+
 ## Planned modules
 
 - **Analytics:** Aggregations over stored intervals only. Ratios use classified browsing time and must be labeled as browsing classifications, not human productivity.

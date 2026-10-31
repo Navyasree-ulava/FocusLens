@@ -4,11 +4,11 @@ FocusLens is a local-first Chromium browser extension for understanding browsing
 
 ## Current status
 
-Phases 0–3 are implemented: the extension foundation, active website tracking, website categorization, per-domain user rules, and YouTube video-level tracking. The popup shows actual stored time, website classification, YouTube playback summaries, and local learning-goal and video/channel rules. User rules live in `chrome.storage.local`; activity intervals and YouTube segments live in IndexedDB. Website paths and query strings are not collected. YouTube titles, channel names, canonical video IDs and playback state are stored locally for the requested video reports.
+Phases 0–4 are implemented: the extension foundation, active website tracking, website categorization, YouTube video-level tracking, and an analytics dashboard. The popup shows actual stored time, website classification, YouTube playback summaries, and local learning-goal and video/channel rules. The dashboard reports daily trends, intent totals, visited websites, activity intervals, and YouTube viewing. User rules live in `chrome.storage.local`; activity intervals and YouTube segments live in IndexedDB. Website paths and searches are not collected. YouTube titles, channel names, canonical video IDs and playback state are stored locally for the requested video reports.
 
 Coding, social media, professional work, and communication default to neutral intent. YouTube is categorized as Entertainment while its website-level intent stays neutral until individual videos are classified in Phase 3. Unknown domains remain unknown until the user adds a rule.
 
-Typecheck, lint, unit tests, and Chrome, Edge, and Brave-targeted builds pass. Real-browser checks for popup focus, website rules, and YouTube playback are still pending.
+Typecheck, lint, unit tests, and Chrome and Edge builds pass; the Brave-targeted build shares the Chrome artifact. Real-browser checks for popup focus, website rules, YouTube playback, and dashboard navigation are still pending.
 
 ## Requirements
 

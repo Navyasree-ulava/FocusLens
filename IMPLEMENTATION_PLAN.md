@@ -8,7 +8,7 @@ Implement phases sequentially. Automated build, lint, typecheck, and phase tests
 | 1 — Tracking engine | Active tab/window, idle/focus, interval accounting, worker recovery, IndexedDB | Interval/recovery tests and Chromium builds pass; popup focus fix has a screenshot regression test | Automated checks complete; updated browser check pending |
 | 2 — Classification | Categories, domain defaults, user overrides, classified-time aggregates | Override precedence, validation, neutral defaults, and ratio math tested | Automated checks complete; popup rule test pending |
 | 3 — YouTube | Metadata/player extraction, navigation transitions, playback timing, categories | SPA, pause, buffering, video-transition cases tested | Automated checks complete; live YouTube playback check pending |
-| 4 — Dashboard | Overview, activity, websites, YouTube analytics and timeline | All charts reconcile with stored records; true empty states | Not started |
+| 4 — Dashboard | Overview, activity, websites, YouTube analytics and timeline | Analytics reconcile with stored records; true empty states | Automated checks complete; browser UI check pending |
 | 5 — Wellbeing | Focus sessions, goals, configurable reminders, privacy controls/export/delete | Data controls and session summaries tested | Not started |
 | 6 — AI (optional) | Provider abstraction, opt-in ambiguous classification, structured confidence and feedback | Disabled by default; consent and failure cases tested | Not started |
 

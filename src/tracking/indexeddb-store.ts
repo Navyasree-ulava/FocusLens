@@ -75,8 +75,9 @@ export class IndexedDbActivityStore implements ActivityStore {
     const database = await this.openDatabase();
     const transaction = database.transaction('youtube', 'readonly');
     const done = transactionResult(transaction);
-    const range = IDBKeyRange.bound(startInclusive, endExclusive, false, true);
-    const segments = await requestResult(transaction.objectStore('youtube').index('startedAt').getAll(range)) as YouTubeSegment[];
+    const range = IDBKeyRange.upperBound(endExclusive, true);
+    const segments = (await requestResult(transaction.objectStore('youtube').index('startedAt').getAll(range)) as YouTubeSegment[])
+      .filter((segment) => segment.endedAt > startInclusive);
     await done;
     return segments;
   }

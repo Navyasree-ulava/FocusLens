@@ -26,6 +26,7 @@
 ## Later phases
 - [x] Phase 3: YouTube metadata and playback tracking, local rules, and popup summaries.
 - [ ] Reload the updated extension, watch a video, pause it, navigate to another video, then verify the popup's YouTube totals and title.
-- [ ] Phase 4: analytics dashboard from actual stored activity.
+- [x] Phase 4: analytics dashboard from actual stored activity, with trends, intent bars, website ranking, activity timeline, and YouTube reports.
+- [ ] Open the dashboard from the popup and verify its overview, tabs, totals, and empty state in the browser.
 - [ ] Phase 5: focus sessions, wellbeing settings and data controls.
 - [ ] Phase 6: optional, opt-in AI provider interface.

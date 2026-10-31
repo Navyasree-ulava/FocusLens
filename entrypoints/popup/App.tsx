@@ -320,6 +320,8 @@ export default function App() {
         </div>
       </details>
 
+      <button type="button" onClick={() => void browser.tabs.create({ url: new URL('/dashboard.html', window.location.href).toString() })} className="mt-4 w-full rounded-xl bg-[#c9ee8e] px-4 py-3 text-xs font-semibold text-[#20251b] hover:bg-[#d6f3a6]">Open analytics dashboard ↗</button>
+
       <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-medium text-[#aaa99f]">YouTube today</h2>
@@ -363,14 +365,14 @@ export default function App() {
           <div>
             <h2 className="text-xs font-medium text-[#d6d4cb]">Local by design</h2>
             <p className="mt-1 text-[11px] leading-4 text-[#88877e]">
-              Only website domains and active time are stored on this device. Background tabs, idle time, and incognito windows are excluded.
+              Activity stays on this device. YouTube video titles and channels are stored for local reports. Background tabs, idle time, and incognito windows are excluded.
             </p>
           </div>
         </div>
       </section>
 
       <footer className="mt-5 border-t border-white/[0.08] pt-4 text-center text-[10px] text-[#777870]">
-        No page paths or query strings are saved
+        Website paths and searches are not saved · YouTube video links are canonical
       </footer>
     </main>
   );
