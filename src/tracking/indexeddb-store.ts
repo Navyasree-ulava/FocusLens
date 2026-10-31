@@ -1,7 +1,8 @@
 import type { ActivityRecord, ActivityStore, TrackerState } from './types';
+import type { YouTubeSegment } from '../youtube/types';
 
 const DATABASE_NAME = 'focuslens-local';
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const STATE_KEY = 'tracker-state';
 
 interface StoredState {
@@ -62,6 +63,24 @@ export class IndexedDbActivityStore implements ActivityStore {
     return records;
   }
 
+  async appendYouTubeSegment(segment: YouTubeSegment): Promise<void> {
+    const database = await this.openDatabase();
+    const transaction = database.transaction('youtube', 'readwrite');
+    const done = transactionResult(transaction);
+    transaction.objectStore('youtube').put(segment);
+    await done;
+  }
+
+  async listYouTubeSegments(startInclusive: number, endExclusive: number): Promise<YouTubeSegment[]> {
+    const database = await this.openDatabase();
+    const transaction = database.transaction('youtube', 'readonly');
+    const done = transactionResult(transaction);
+    const range = IDBKeyRange.bound(startInclusive, endExclusive, false, true);
+    const segments = await requestResult(transaction.objectStore('youtube').index('startedAt').getAll(range)) as YouTubeSegment[];
+    await done;
+    return segments;
+  }
+
   private openDatabase(): Promise<IDBDatabase> {
     if (this.databasePromise) return this.databasePromise;
     this.databasePromise = new Promise((resolve, reject) => {
@@ -75,6 +94,12 @@ export class IndexedDbActivityStore implements ActivityStore {
         }
         if (!database.objectStoreNames.contains('metadata')) {
           database.createObjectStore('metadata', { keyPath: 'key' });
+        }
+        if (!database.objectStoreNames.contains('youtube')) {
+          const youtube = database.createObjectStore('youtube', { keyPath: 'id' });
+          youtube.createIndex('startedAt', 'startedAt', { unique: false });
+          youtube.createIndex('videoId', 'metadata.videoId', { unique: false });
+          youtube.createIndex('channelName', 'metadata.channelName', { unique: false });
         }
       };
       request.onsuccess = () => {

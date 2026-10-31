@@ -22,9 +22,17 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 - **Summary math:** The popup aggregates stored intervals by category and by productive, recreational, neutral, or unknown intent. Its classified-time ratio is productive ÷ (productive + recreational + neutral); unknown is excluded. An empty or fully unknown dataset has no ratio.
 - **Editing:** Users can change the current domain's category/intent or add/remove rules for any domain from the popup.
 
+## Phase 3 YouTube intelligence
+
+- **Collection boundary:** A content script runs only on `www.youtube.com`. It reads the current video ID, title, channel label, canonical watch/Shorts URL, and the `<video>` playback state. It does not read transcript, comments, search text, or unrelated page content.
+- **Foreground accounting:** The background coordinator sends current browser-tab/focus/idle state to the YouTube content script. YouTube playback and browsing segments are counted only while the tab is the foreground active tab in a focused, non-idle browser window. The popup port maintains this context while the browser action is open.
+- **Player lifecycle:** Media events, YouTube SPA navigation events, URL/history changes, visibility changes, and DOM changes update the segment tracker. It separates playing, paused, buffering, and browsing; long missed-checkpoint gaps are excluded conservatively.
+- **Classification:** Video and channel overrides take precedence, followed by matching learning goals and conservative title/channel keywords. Uncertain content remains Unknown. Shorts are identified from their canonical path when available.
+- **Persistence and reports:** Validated YouTube segments live in the local IndexedDB `youtube` store. Learning goals and video/channel rules live in `chrome.storage.local`. The popup calculates learning, entertainment, Shorts, paused, buffering, and browsing totals from stored records only.
+- **Privacy detail:** YouTube reports require locally storing video titles, channel names, and canonical video IDs/URLs. General browsing storage remains hostname-only. No YouTube data is uploaded.
+
 ## Planned modules
 
-- **YouTube content script:** A narrowly scoped script for video metadata and player state only. Validate page-derived values and do not inspect forms or collect unrelated page text.
 - **Analytics:** Aggregations over stored intervals only. Ratios use classified browsing time and must be labeled as browsing classifications, not human productivity.
 - **Dashboard:** Reports, settings, sessions, and true empty states until records exist.
 - **Optional AI:** No provider or external processing by default. Any future integration must be opt-in, disclosed, and abstracted behind a typed provider contract.

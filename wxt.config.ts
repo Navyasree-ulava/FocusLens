@@ -9,6 +9,7 @@ export default defineConfig({
     version: '0.1.0',
     minimum_chrome_version: '116',
     permissions: ['storage', 'tabs', 'idle', 'alarms'],
+    host_permissions: ['https://www.youtube.com/*'],
     incognito: 'not_allowed',
     action: {
       default_title: 'FocusLens',

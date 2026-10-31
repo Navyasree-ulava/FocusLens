@@ -7,6 +7,9 @@ import { deleteDomainOverride, loadDomainOverrides, saveDomainOverride, type Dom
 import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
 import type { TrackerState } from '../../src/tracking/types';
+import { YOUTUBE_CATEGORIES, type YouTubeCategory, type YouTubePageState, type YouTubeSegment, type YouTubeSettings } from '../../src/youtube/types';
+import { deleteLearningGoal, deleteYouTubeOverride, loadYouTubeSettings, saveLearningGoal, saveYouTubeOverride } from '../../src/youtube/settings-store';
+import { mostWatchedVideos, summarizeYouTubeTime } from '../../src/youtube/summary';
 
 interface PopupData {
   state: TrackerState | null;
@@ -14,6 +17,8 @@ interface PopupData {
   summary: ProductivitySummary;
   ready: boolean;
   error: boolean;
+  youtubeSegments: YouTubeSegment[];
+  youtubePageState: YouTubePageState | null;
 }
 
 const activityStore = new IndexedDbActivityStore();
@@ -42,6 +47,8 @@ export default function App() {
     summary: summarizeWebsiteTime([]),
     ready: false,
     error: false,
+    youtubeSegments: [],
+    youtubePageState: null,
   });
   const [overrides, setOverrides] = useState<DomainOverride[]>([]);
   const [draftCategory, setDraftCategory] = useState<WebsiteCategory>('Unknown');
@@ -51,18 +58,28 @@ export default function App() {
   const [customProductivity, setCustomProductivity] = useState<ProductivityValue>('productive');
   const [currentMessage, setCurrentMessage] = useState('');
   const [managerMessage, setManagerMessage] = useState('');
+  const [youtubeSettings, setYouTubeSettings] = useState<YouTubeSettings>({ learningGoals: [], overrides: [] });
+  const [learningGoalDraft, setLearningGoalDraft] = useState('');
+  const [youtubeRuleDraft, setYouTubeRuleDraft] = useState('');
+  const [youtubeRuleScope, setYouTubeRuleScope] = useState<'video' | 'channel'>('video');
+  const [youtubeRuleCategory, setYouTubeRuleCategory] = useState<YouTubeCategory>('Educational');
+  const [youtubeMessage, setYouTubeMessage] = useState('');
 
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
       try {
         const now = Date.now();
-        const [state, userOverrides] = await Promise.all([
+        const [state, userOverrides, videoSettings, session] = await Promise.all([
           activityStore.readState(),
           loadDomainOverrides(),
+          loadYouTubeSettings(),
+          browser.storage.session.get('focuslens-youtube-current-state'),
         ]);
         const { start, end } = localDayBounds(now);
         const records = await activityStore.listRecords(start, end);
+        const youtubeSegments = await activityStore.listYouTubeSegments(start, end);
+        const youtubeState = session['focuslens-youtube-current-state'] as { pageState?: YouTubePageState } | undefined;
         const storedMs = records.reduce((total, record) => total + record.durationMs, 0);
         const openMs = state?.intervalStartedAt !== null && state?.context
           ? Math.max(0, now - Math.max(state.intervalStartedAt, start))
@@ -71,12 +88,15 @@ export default function App() {
         if (openMs > 0 && state?.context) summaryRecords.push({ domain: state.context.domain, durationMs: openMs });
         if (mounted) {
           setOverrides(userOverrides);
+          setYouTubeSettings(videoSettings);
           setData({
             state,
             activeMsToday: storedMs + openMs,
             summary: summarizeWebsiteTime(summaryRecords, userOverrides),
             ready: true,
             error: false,
+            youtubeSegments,
+            youtubePageState: youtubeState?.pageState ?? null,
           });
         }
       } catch {
@@ -86,7 +106,7 @@ export default function App() {
 
     const port = browser.runtime.connect({ name: 'focuslens-popup' });
     port.onMessage.addListener((message: { type: string }) => {
-      if (message.type === 'focuslens-tracker-updated') void refresh();
+      if (message.type === 'focuslens-tracker-updated' || message.type === 'focuslens-youtube-updated') void refresh();
     });
     void refresh();
     const timer = window.setInterval(() => void refresh(), 15_000);
@@ -144,6 +164,41 @@ export default function App() {
       setManagerMessage('Could not remove this website rule.');
     }
   };
+
+  const saveGoal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      setYouTubeSettings(await saveLearningGoal(learningGoalDraft));
+      setLearningGoalDraft('');
+      setYouTubeMessage('Learning goal saved on this device.');
+    } catch (error) {
+      setYouTubeMessage(error instanceof Error ? error.message : 'Could not save this goal.');
+    }
+  };
+
+  const saveYouTubeRule = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      setYouTubeSettings(await saveYouTubeOverride(youtubeRuleScope, youtubeRuleDraft, youtubeRuleCategory));
+      setYouTubeRuleDraft('');
+      setYouTubeMessage('YouTube preference saved on this device.');
+    } catch (error) {
+      setYouTubeMessage(error instanceof Error ? error.message : 'Could not save this preference.');
+    }
+  };
+
+  const removeYouTubeRule = async (scope: 'video' | 'channel', key: string) => {
+    try {
+      setYouTubeSettings(await deleteYouTubeOverride(scope, key));
+      setYouTubeMessage('YouTube preference removed.');
+    } catch {
+      setYouTubeMessage('Could not remove this preference.');
+    }
+  };
+
+  const currentVideo = data.youtubePageState?.metadata;
+  const youtubeSummary = summarizeYouTubeTime(data.youtubeSegments, youtubeSettings);
+  const isCurrentYouTube = currentDomain === 'www.youtube.com';
 
   const updateCategory = (category: WebsiteCategory, custom = false) => {
     if (custom) {
@@ -263,6 +318,43 @@ export default function App() {
           ))}
           {overrides.length === 0 && <p className="text-[10px] text-[#777870]">No custom domain rules saved yet.</p>}
         </div>
+      </details>
+
+      <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-medium text-[#aaa99f]">YouTube today</h2>
+          <span className="text-[10px] text-[#777870]">Playing time</span>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+          <p className="text-[#85847a]">Learning <b className="ml-1 font-medium text-[#b3d783]">{displayDuration(youtubeSummary.educationalViewingMs)}</b></p>
+          <p className="text-[#85847a]">Entertainment <b className="ml-1 font-medium text-[#e6b278]">{displayDuration(youtubeSummary.entertainmentViewingMs)}</b></p>
+          <p className="text-[#85847a]">Shorts <b className="ml-1 font-medium text-[#c9c7bc]">{displayDuration(youtubeSummary.shortsMs)}</b></p>
+          <p className="text-[#85847a]">Paused <b className="ml-1 font-medium text-[#c9c7bc]">{displayDuration(youtubeSummary.pausedMs)}</b></p>
+          <p className="text-[#85847a]">Buffering <b className="ml-1 font-medium text-[#c9c7bc]">{displayDuration(youtubeSummary.bufferingMs)}</b></p>
+          <p className="text-[#85847a]">Browsing <b className="ml-1 font-medium text-[#c9c7bc]">{displayDuration(youtubeSummary.browsingMs)}</b></p>
+        </div>
+        {isCurrentYouTube && currentVideo && <p className="mt-3 truncate border-t border-white/[0.06] pt-3 text-[11px] text-[#c9c7bc]" title={currentVideo.title ?? undefined}>Now: {currentVideo.title ?? 'Unknown video'} · {currentVideo.channelName ?? 'Unknown channel'}</p>}
+        {mostWatchedVideos(data.youtubeSegments, 3).map((video) => <a key={video.videoId} href={video.videoUrl} target="_blank" rel="noreferrer" className="mt-2 block truncate text-[10px] text-[#aaa99f] hover:text-[#c9ee8e]">{video.title ?? video.videoId} · {displayDuration(video.durationMs)}</a>)}
+        {data.youtubeSegments.length === 0 && <p className="mt-2 text-[10px] text-[#777870]">Your local YouTube activity will appear here.</p>}
+      </section>
+
+      <details className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">
+        <summary className="cursor-pointer list-none text-xs font-medium text-[#c9c7bc]">YouTube learning goals and rules</summary>
+        <form onSubmit={(event) => void saveGoal(event)} className="mt-3 flex gap-2">
+          <input required value={learningGoalDraft} onChange={(event) => setLearningGoalDraft(event.target.value)} placeholder="e.g. React, statistics" className="min-w-0 flex-1 rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[10px] text-[#e2e0d7] placeholder:text-[#626159]" />
+          <button type="submit" className="rounded-lg border border-white/[0.1] px-2.5 text-[10px] text-[#d8d6cc]">Add goal</button>
+        </form>
+        {youtubeSettings.learningGoals.map((goal) => <div key={goal} className="mt-2 flex items-center justify-between text-[10px] text-[#aaa99f]"><span>{goal}</span><button type="button" onClick={() => void deleteLearningGoal(goal).then(setYouTubeSettings)} className="text-[#c9927e]">Remove</button></div>)}
+        <form onSubmit={(event) => void saveYouTubeRule(event)} className="mt-4 space-y-2 border-t border-white/[0.06] pt-3">
+          <p className="text-[10px] text-[#87867d]">Classify a channel or video ID</p>
+          <div className="grid grid-cols-[0.8fr_1fr] gap-2">
+            <select value={youtubeRuleScope} onChange={(event) => setYouTubeRuleScope(event.target.value as 'video' | 'channel')} className="rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[10px] text-[#d8d6cc]"><option value="video">Video ID</option><option value="channel">Channel name</option></select>
+            <select value={youtubeRuleCategory} onChange={(event) => setYouTubeRuleCategory(event.target.value as YouTubeCategory)} className="rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[10px] text-[#d8d6cc]">{YOUTUBE_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select>
+          </div>
+          <div className="flex gap-2"><input required value={youtubeRuleDraft} onChange={(event) => setYouTubeRuleDraft(event.target.value)} placeholder={youtubeRuleScope === 'video' ? '11-character video ID' : 'Channel name'} className="min-w-0 flex-1 rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[10px] text-[#e2e0d7] placeholder:text-[#626159]" /><button type="submit" className="rounded-lg border border-white/[0.1] px-2.5 text-[10px] text-[#d8d6cc]">Save rule</button></div>
+        </form>
+        {youtubeSettings.overrides.map((rule) => <div key={`${rule.scope}-${rule.key}`} className="mt-2 flex items-center justify-between gap-2 text-[10px] text-[#aaa99f]"><span className="min-w-0 truncate">{rule.scope}: {rule.key} · {rule.category}</span><button type="button" onClick={() => void removeYouTubeRule(rule.scope, rule.key)} className="text-[#c9927e]">Remove</button></div>)}
+        {youtubeMessage && <p role="status" className="mt-2 text-[10px] text-[#b3d783]">{youtubeMessage}</p>}
       </details>
 
       <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">

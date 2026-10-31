@@ -24,7 +24,8 @@
 - [ ] In the browser, save a current-domain override, reopen the popup, and verify it persists.
 
 ## Later phases
-- [ ] Phase 3: YouTube metadata and playback tracking.
+- [x] Phase 3: YouTube metadata and playback tracking, local rules, and popup summaries.
+- [ ] Reload the updated extension, watch a video, pause it, navigate to another video, then verify the popup's YouTube totals and title.
 - [ ] Phase 4: analytics dashboard from actual stored activity.
 - [ ] Phase 5: focus sessions, wellbeing settings and data controls.
 - [ ] Phase 6: optional, opt-in AI provider interface.

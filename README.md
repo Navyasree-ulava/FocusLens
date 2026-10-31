@@ -4,11 +4,11 @@ FocusLens is a local-first Chromium browser extension for understanding browsing
 
 ## Current status
 
-Phases 0–2 are implemented: the extension foundation, active website tracking, website categorization, per-domain user rules, and classified-time summaries. The popup shows actual stored time, current domain, category, browsing intent, and the classified-time ratio. User rules live in `chrome.storage.local`; activity intervals live in IndexedDB. No full URL, page title, or content is saved.
+Phases 0–3 are implemented: the extension foundation, active website tracking, website categorization, per-domain user rules, and YouTube video-level tracking. The popup shows actual stored time, website classification, YouTube playback summaries, and local learning-goal and video/channel rules. User rules live in `chrome.storage.local`; activity intervals and YouTube segments live in IndexedDB. Website paths and query strings are not collected. YouTube titles, channel names, canonical video IDs and playback state are stored locally for the requested video reports.
 
 Coding, social media, professional work, and communication default to neutral intent. YouTube is categorized as Entertainment while its website-level intent stays neutral until individual videos are classified in Phase 3. Unknown domains remain unknown until the user adds a rule.
 
-Automated checks pass. The real-browser check for the popup focus fix and rule editing is still pending.
+Typecheck, lint, unit tests, and Chrome, Edge, and Brave-targeted builds pass. Real-browser checks for popup focus, website rules, and YouTube playback are still pending.
 
 ## Requirements
 
