@@ -39,6 +39,13 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 - **Charts:** Small, dependency-free CSS bars are used for the trend and intent breakdown; their values are derived directly from stored durations. No demo values are seeded.
 - **Navigation:** The popup opens the extension dashboard in a browser tab. The dashboard refreshes periodically while open.
 
+## Phase 5 wellbeing
+
+- **Focus sessions:** Sessions persist in the local IndexedDB `focusSessions` store. Active blocks are recorded across pause/resume transitions. A persisted alarm closes a session at its selected active-time target; on browser restart, an active session is paused at its last durable checkpoint so shutdown time is not counted. Summaries intersect session blocks with stored website intervals and current classification rules.
+- **Goals and tracking controls:** Daily browsing goal, global pause, excluded hostnames, reminder preferences, and intervals are validated and stored in `chrome.storage.local`. Exclusions match the exact domain and its subdomains. The background tracker enforces pause and exclusions before it starts a new interval.
+- **Reminders:** Break reminders count actual stored foreground active time. Recreational-site check-ins count time only on domains classified as recreational by the current rules. Both remain off by default. The extension requests the optional `notifications` permission only after the user enables a reminder.
+- **Data controls:** Export downloads a JSON snapshot containing local activity, YouTube metadata, focus sessions, tracker state, and settings. Delete-all clears all FocusLens IndexedDB stores and extension-local/session settings after an explicit in-app confirmation.
+
 ## Planned modules
 
 - **Analytics:** Aggregations over stored intervals only. Ratios use classified browsing time and must be labeled as browsing classifications, not human productivity.

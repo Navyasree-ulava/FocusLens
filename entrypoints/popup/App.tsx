@@ -10,6 +10,10 @@ import type { TrackerState } from '../../src/tracking/types';
 import { YOUTUBE_CATEGORIES, type YouTubeCategory, type YouTubePageState, type YouTubeSegment, type YouTubeSettings } from '../../src/youtube/types';
 import { deleteLearningGoal, deleteYouTubeOverride, loadYouTubeSettings, saveLearningGoal, saveYouTubeOverride } from '../../src/youtube/settings-store';
 import { mostWatchedVideos, summarizeYouTubeTime } from '../../src/youtube/summary';
+import { endFocusSession, focusSessionElapsedMs, pauseFocusSession, resumeFocusSession, startFocusSession, summarizeFocusSession } from '../../src/wellbeing/focus-sessions';
+import { DEFAULT_WELLBEING_SETTINGS, loadWellbeingSettings, saveWellbeingSettings } from '../../src/wellbeing/settings-store';
+import type { FocusSession, WellbeingSettings } from '../../src/wellbeing/types';
+import type { ActivityRecord } from '../../src/tracking/types';
 
 interface PopupData {
   state: TrackerState | null;
@@ -19,16 +23,21 @@ interface PopupData {
   error: boolean;
   youtubeSegments: YouTubeSegment[];
   youtubePageState: YouTubePageState | null;
+  focusSession: FocusSession | null;
+  wellbeing: WellbeingSettings;
+  records: ActivityRecord[];
 }
 
 const activityStore = new IndexedDbActivityStore();
+const FOCUS_SESSION_END_ALARM = 'focuslens-focus-session-end';
 
 function displayDuration(milliseconds: number): string {
   if (milliseconds > 0 && milliseconds < 60_000) return '<1m';
   return formatMinutes(milliseconds / 60_000);
 }
 
-function trackerStatus(state: TrackerState | null): { label: string; detail: string; color: string } {
+function trackerStatus(state: TrackerState | null, trackingPaused = false): { label: string; detail: string; color: string } {
+  if (trackingPaused) return { label: 'Paused', detail: 'Tracking is paused in your settings', color: 'bg-[#777870]' };
   if (!state) return { label: 'Starting', detail: 'Checking the active browser tab', color: 'bg-[#d9bc72]' };
   if (state.intervalStartedAt !== null) return { label: 'Tracking', detail: 'Counting this active tab', color: 'bg-[#a9da7b]' };
   if (!state.focused) return { label: 'Paused', detail: 'Waiting for the browser to be focused', color: 'bg-[#777870]' };
@@ -49,6 +58,9 @@ export default function App() {
     error: false,
     youtubeSegments: [],
     youtubePageState: null,
+    focusSession: null,
+    wellbeing: DEFAULT_WELLBEING_SETTINGS,
+    records: [],
   });
   const [overrides, setOverrides] = useState<DomainOverride[]>([]);
   const [draftCategory, setDraftCategory] = useState<WebsiteCategory>('Unknown');
@@ -64,20 +76,36 @@ export default function App() {
   const [youtubeRuleScope, setYouTubeRuleScope] = useState<'video' | 'channel'>('video');
   const [youtubeRuleCategory, setYouTubeRuleCategory] = useState<YouTubeCategory>('Educational');
   const [youtubeMessage, setYouTubeMessage] = useState('');
+  const [focusGoalDraft, setFocusGoalDraft] = useState('Focused work');
 
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
       try {
         const now = Date.now();
-        const [state, userOverrides, videoSettings, session] = await Promise.all([
+        const [state, userOverrides, videoSettings, session, focusSessions, wellbeing] = await Promise.all([
           activityStore.readState(),
           loadDomainOverrides(),
           loadYouTubeSettings(),
           browser.storage.session.get('focuslens-youtube-current-state'),
+          activityStore.listFocusSessions(),
+          loadWellbeingSettings(),
         ]);
         const { start, end } = localDayBounds(now);
         const records = await activityStore.listRecords(start, end);
+        const currentFocusSession = focusSessions.find((item) => item.status !== 'completed');
+        const focusRecords = currentFocusSession
+          ? await activityStore.listRecords(Math.min(start, currentFocusSession.startedAt), end)
+          : records;
+        if (state?.intervalStartedAt !== null && state?.context && now > state.intervalStartedAt) {
+          focusRecords.push({
+            id: 'current-open-focus',
+            startedAt: state.intervalStartedAt,
+            endedAt: now,
+            durationMs: now - state.intervalStartedAt,
+            domain: state.context.domain,
+          });
+        }
         const youtubeSegments = await activityStore.listYouTubeSegments(start, end);
         const youtubeState = session['focuslens-youtube-current-state'] as { pageState?: YouTubePageState } | undefined;
         const storedMs = records.reduce((total, record) => total + record.durationMs, 0);
@@ -97,6 +125,9 @@ export default function App() {
             error: false,
             youtubeSegments,
             youtubePageState: youtubeState?.pageState ?? null,
+            focusSession: focusSessions.find((item) => item.status !== 'completed') ?? null,
+            wellbeing,
+            records: focusRecords,
           });
         }
       } catch {
@@ -117,7 +148,7 @@ export default function App() {
     };
   }, []);
 
-  const status = trackerStatus(data.state);
+  const status = trackerStatus(data.state, data.wellbeing.trackingPaused);
   const active = Boolean(data.state && data.state.intervalStartedAt !== null && data.state.context);
   const currentDomain = data.state?.context?.domain ?? '';
   const classification = classifyDomain(currentDomain, overrides);
@@ -199,6 +230,34 @@ export default function App() {
   const currentVideo = data.youtubePageState?.metadata;
   const youtubeSummary = summarizeYouTubeTime(data.youtubeSegments, youtubeSettings);
   const isCurrentYouTube = currentDomain === 'www.youtube.com';
+  const focusSession = data.focusSession;
+  const focusSummary = focusSession ? summarizeFocusSession(focusSession, data.records, overrides) : null;
+
+  const startQuickFocusSession = async () => {
+    try {
+      const session = startFocusSession(focusGoalDraft, 25, Date.now());
+      await activityStore.saveFocusSession(session);
+      await browser.alarms.create(FOCUS_SESSION_END_ALARM, { when: Date.now() + session.targetMinutes * 60_000 });
+      setData((current) => ({ ...current, focusSession: session }));
+    } catch (error) { setCurrentMessage(error instanceof Error ? error.message : 'Could not start the focus session.'); }
+  };
+
+  const updateFocusSession = async (action: 'pause' | 'resume' | 'end') => {
+    if (!focusSession) return;
+    const now = Date.now();
+    const session = action === 'pause' ? pauseFocusSession(focusSession, now) : action === 'resume' ? resumeFocusSession(focusSession, now) : endFocusSession(focusSession, now);
+    await activityStore.saveFocusSession(session);
+    if (action === 'pause' || action === 'end') await browser.alarms.clear(FOCUS_SESSION_END_ALARM);
+    else await browser.alarms.create(FOCUS_SESSION_END_ALARM, {
+      when: now + Math.max(1_000, focusSession.targetMinutes * 60_000 - focusSessionElapsedMs(session, now)),
+    });
+    setData((current) => ({ ...current, focusSession: action === 'end' ? null : session }));
+  };
+
+  const toggleTracking = async () => {
+    const wellbeing = await saveWellbeingSettings({ ...data.wellbeing, trackingPaused: !data.wellbeing.trackingPaused });
+    setData((current) => ({ ...current, wellbeing }));
+  };
 
   const updateCategory = (category: WebsiteCategory, custom = false) => {
     if (custom) {
@@ -280,6 +339,11 @@ export default function App() {
         </button>
         {currentMessage && <p role="status" className="mt-2 text-[10px] text-[#b3d783]">{currentMessage}</p>}
         <p className="mt-2 text-[10px] leading-4 text-[#777870]">Social media, coding, work, and communication start as neutral. Change the intent to match your use.</p>
+      </section>
+
+      <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">
+        <div className="flex items-center justify-between"><h2 className="text-xs font-medium text-[#aaa99f]">Focus session</h2><button type="button" onClick={() => void toggleTracking()} className="text-[10px] text-[#aaa99f]">{data.wellbeing.trackingPaused ? 'Resume tracking' : 'Pause tracking'}</button></div>
+        {focusSession ? <><p className="mt-3 truncate text-sm font-medium">{focusSession.goal}</p><p className="mt-1 text-[10px] text-[#777870]">{focusSession.status} · {displayDuration(focusSummary?.focusedMs ?? 0)} tracked</p><div className="mt-3 flex gap-2">{focusSession.status === 'active' ? <button type="button" onClick={() => void updateFocusSession('pause')} className="rounded-lg border border-white/[.1] px-3 py-2 text-[10px]">Pause</button> : <button type="button" onClick={() => void updateFocusSession('resume')} className="rounded-lg border border-white/[.1] px-3 py-2 text-[10px]">Resume</button>}<button type="button" onClick={() => void updateFocusSession('end')} className="rounded-lg bg-[#c9ee8e] px-3 py-2 text-[10px] font-semibold text-[#20251b]">End session</button></div></> : <form onSubmit={(event) => { event.preventDefault(); void startQuickFocusSession(); }} className="mt-3 flex gap-2"><input value={focusGoalDraft} onChange={(event) => setFocusGoalDraft(event.target.value)} maxLength={120} required placeholder="Focus goal" className="min-w-0 flex-1 rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[10px] text-[#e2e0d7]" /><button type="submit" className="rounded-lg bg-[#c9ee8e] px-3 py-2 text-[10px] font-semibold text-[#20251b]">Start 25m</button></form>}
       </section>
 
       <details className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">

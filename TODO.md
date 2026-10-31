@@ -28,5 +28,8 @@
 - [ ] Reload the updated extension, watch a video, pause it, navigate to another video, then verify the popup's YouTube totals and title.
 - [x] Phase 4: analytics dashboard from actual stored activity, with trends, intent bars, website ranking, activity timeline, and YouTube reports.
 - [ ] Open the dashboard from the popup and verify its overview, tabs, totals, and empty state in the browser.
-- [ ] Phase 5: focus sessions, wellbeing settings and data controls.
+- [x] Phase 5: focus sessions with pause/resume/target completion and classified activity summaries.
+- [x] Add daily time goal, global tracking pause, excluded domains, optional break and recreational-site reminders.
+- [x] Add local JSON export and delete-all-data controls.
+- [ ] In the browser, create and pause a focus session; verify domain exclusions and pause tracking; grant notifications only if testing reminders; verify export and delete confirmation.
 - [ ] Phase 6: optional, opt-in AI provider interface.
