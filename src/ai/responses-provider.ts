@@ -75,7 +75,7 @@ export class OpenAIResponsesProvider implements AIClassificationProvider {
                 type: 'object',
                 properties: {
                   category: { type: 'string', enum: YOUTUBE_CATEGORIES },
-                  confidence: { type: 'number', minimum: 0, maximum: 1 },
+                  confidence: { type: 'number' },
                   reason: { type: 'string' },
                 },
                 required: ['category', 'confidence', 'reason'],
