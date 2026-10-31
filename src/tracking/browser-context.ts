@@ -5,9 +5,12 @@ export interface BrowserContextSnapshot {
   context: ActiveContext | null;
 }
 
-export async function readBrowserContext(): Promise<BrowserContextSnapshot> {
-  const window = await browser.windows.getLastFocused({ populate: true });
-  if (!window.focused) return { focused: false, context: null };
+export function contextFromWindow(
+  window: Browser.windows.Window,
+  allowBrowserPopupFocus = false,
+): BrowserContextSnapshot {
+  const focused = window.focused || allowBrowserPopupFocus;
+  if (!focused) return { focused: false, context: null };
   if (window.incognito) return { focused: true, context: null };
 
   const activeTab = window.tabs?.find((tab) => tab.active);
@@ -20,6 +23,11 @@ export async function readBrowserContext(): Promise<BrowserContextSnapshot> {
     focused: true,
     context: domain ? { tabId: activeTab.id, windowId: window.id, domain } : null,
   };
+}
+
+export async function readBrowserContext(allowBrowserPopupFocus = false): Promise<BrowserContextSnapshot> {
+  const window = await browser.windows.getLastFocused({ populate: true });
+  return contextFromWindow(window, allowBrowserPopupFocus);
 }
 
 export function getTrackableDomain(rawUrl: string | undefined): string | null {

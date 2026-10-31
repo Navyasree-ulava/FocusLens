@@ -47,11 +47,16 @@ export default function App() {
       }
     };
 
+    const port = browser.runtime.connect({ name: 'focuslens-popup' });
+    port.onMessage.addListener((message: { type: string }) => {
+      if (message.type === 'focuslens-tracker-updated') void refresh();
+    });
     void refresh();
     const timer = window.setInterval(() => void refresh(), 15_000);
     return () => {
       mounted = false;
       window.clearInterval(timer);
+      port.disconnect();
     };
   }, []);
 

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { IndexedDbActivityStore } from '../src/tracking/indexeddb-store';
 import { TrackingEngine } from '../src/tracking/engine';
-import { getTrackableDomain } from '../src/tracking/browser-context';
+import { contextFromWindow, getTrackableDomain } from '../src/tracking/browser-context';
 import { localDayBounds, splitIntervalAtLocalMidnights } from '../src/tracking/time';
 import type { BrowserSnapshot } from '../src/tracking/types';
 
@@ -112,6 +112,21 @@ describe('tracking engine', () => {
     expect(getTrackableDomain('chrome://settings')).toBeNull();
     expect(getTrackableDomain('file:///private/document.pdf')).toBeNull();
     expect(getTrackableDomain('not a URL')).toBeNull();
+  });
+
+  it('keeps the active website available while the extension popup is open', () => {
+    const lastFocusedWindow = {
+      focused: false,
+      id: 12,
+      incognito: false,
+      tabs: [{ active: true, id: 7, incognito: false, url: 'https://focus.example/path' }],
+    } as Browser.windows.Window;
+
+    expect(contextFromWindow(lastFocusedWindow)).toEqual({ focused: false, context: null });
+    expect(contextFromWindow(lastFocusedWindow, true)).toEqual({
+      focused: true,
+      context: { tabId: 7, windowId: 12, domain: 'focus.example' },
+    });
   });
 });
 
