@@ -1,12 +1,12 @@
 # Implementation plan
 
-Follow phases in order. Do not begin a later phase until the current phase's build and automated tests pass and its real-browser smoke test has been reviewed.
+Implement phases sequentially. Automated build, lint, typecheck, and phase tests pass before moving to the next phase. Browser-specific behavior still needs live checks in Chrome, Edge, and Brave.
 
 | Phase | Scope | Exit criteria | Status |
 |---|---|---|---|
 | 0 — Foundation | WXT + React + TypeScript, Tailwind, lint/test setup, popup shell, docs | Typecheck, lint, unit test, Chrome MV3 build pass | Complete |
-| 1 — Tracking engine | Active tab/window, idle/focus, interval accounting, worker recovery, IndexedDB | Automated interval/recovery tests and Chrome build pass; manual browser smoke test | Awaiting manual browser check |
-| 2 — Classification | Categories, domain defaults, user overrides, classified-time aggregates | Override precedence and unknown behavior tested | Not started |
+| 1 — Tracking engine | Active tab/window, idle/focus, interval accounting, worker recovery, IndexedDB | Interval/recovery tests and Chromium builds pass; popup focus fix has a screenshot regression test | Automated checks complete; updated browser check pending |
+| 2 — Classification | Categories, domain defaults, user overrides, classified-time aggregates | Override precedence, validation, neutral defaults, and ratio math tested | Automated checks complete; popup rule test pending |
 | 3 — YouTube | Metadata/player extraction, navigation transitions, playback timing, categories | SPA, pause, buffering, video-transition cases tested | Not started |
 | 4 — Dashboard | Overview, activity, websites, YouTube analytics and timeline | All charts reconcile with stored records; true empty states | Not started |
 | 5 — Wellbeing | Focus sessions, goals, configurable reminders, privacy controls/export/delete | Data controls and session summaries tested | Not started |
@@ -27,7 +27,15 @@ Follow phases in order. Do not begin a later phase until the current phase's bui
 - Use a one-minute alarm to recheck browser state and checkpoint intervals, and `storage.session` to distinguish worker restarts from browser restarts.
 - End intervals at the last durable checkpoint after a browser restart or a detected observation gap.
 - Treat idle and locked states as not trackable, and exclude the 60-second idle threshold conservatively.
-- Run automated checks after each phase. Actual browser behavior still needs confirmation by loading the extension in Chrome.
+- Keep tracking active while the action popup is open; re-read actual browser focus after it closes.
+
+## Phase 2 decisions
+
+- Separate purpose categories from productivity intent so a site's topic does not dictate how an individual uses it.
+- Default mixed-use social, coding, communication, and work sites to neutral. Keep YouTube neutral at the domain level until video-level classification exists.
+- Let user rules match a domain and its subdomains, with the most specific rule taking precedence.
+- Calculate the browsing ratio as productive time divided by all known intent time; exclude unknown time and state the formula in the UI.
+- Apply the current domain rule when aggregating historical records rather than storing redundant classification on each interval.
 
 ## Technical risks
 

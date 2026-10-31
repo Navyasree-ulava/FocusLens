@@ -4,9 +4,11 @@ FocusLens is a local-first Chromium browser extension for understanding browsing
 
 ## Current status
 
-Phase 0 foundation and Phase 1 tracking are implemented. The extension records only the hostname of an eligible active tab and its active time. It excludes background tabs, unfocused browser windows, idle periods, unsupported browser pages, and incognito browsing. Activity and tracker state stay in local IndexedDB; no page paths, query strings, titles, or content are saved.
+Phases 0–2 are implemented: the extension foundation, active website tracking, website categorization, per-domain user rules, and classified-time summaries. The popup shows actual stored time, current domain, category, browsing intent, and the classified-time ratio. User rules live in `chrome.storage.local`; activity intervals live in IndexedDB. No full URL, page title, or content is saved.
 
-The popup shows current tracking state, current domain, and today's active browsing duration from stored intervals. Categories and reports will arrive in later phases. This build has passed automated checks; the real browser smoke test is still pending.
+Coding, social media, professional work, and communication default to neutral intent. YouTube is categorized as Entertainment while its website-level intent stays neutral until individual videos are classified in Phase 3. Unknown domains remain unknown until the user adds a rule.
+
+Automated checks pass. The real-browser check for the popup focus fix and rule editing is still pending.
 
 ## Requirements
 
@@ -22,7 +24,7 @@ npm run dev
 
 For an unpacked production build, use `npm run build`, then load `.output/chrome-mv3` from the browser's extension page. Chrome: `chrome://extensions`; Edge: `edge://extensions`; Brave: `brave://extensions`. Turn on Developer mode and select **Load unpacked**.
 
-Tracking requires the `tabs`, `idle`, and `alarms` permissions in addition to `storage`. The browser uses these to identify the active tab's domain, detect focus/idle transitions, checkpoint local activity, and persist state. FocusLens does not read page paths or transmit data.
+Tracking requires the `tabs`, `idle`, and `alarms` permissions in addition to `storage`. FocusLens uses these to identify the active tab's domain, detect focus/idle transitions, checkpoint local activity, and persist state. It does not read page paths or transmit data.
 
 ## Quality checks
 
@@ -33,10 +35,10 @@ npm test
 npm run build
 ```
 
-## Manual smoke test needed
+## Manual browser check
 
-After loading the unpacked extension, keep a normal web tab in front for about a minute. Open the FocusLens popup and confirm its status says **Tracking**, the current website is only the hostname, and the duration advances. Then switch to another tab and confirm its hostname replaces the previous one. The popup duration should not rise while another application has browser focus. Idle detection uses a 60-second threshold and conservatively excludes that threshold window when idle begins.
+Reload the unpacked extension after building. Open the popup from a regular HTTPS tab and confirm it says **Tracking**, shows that tab's hostname, and continues advancing today's time while the popup stays open. Switch to another active tab and verify the hostname and category change. Set a category or intent override, close and reopen the popup, and confirm the selection persists. Under **Manage domains**, add a custom domain and check that its rule appears.
 
-To inspect locally stored intervals, open the popup's developer tools and inspect IndexedDB database `focuslens-local`, object store `activity`. Records contain a domain and start/end/duration timestamps only.
+The productivity ratio is productive time divided by productive, recreational, and neutral browsing time; unknown time is excluded. It describes classifications of browsing time, not a measure of personal productivity.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md), [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md), and [TODO.md](TODO.md).

@@ -1,5 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { formatMinutes } from '../../src/format';
+import { CATEGORY_DEFINITIONS, defaultProductivityFor, PRODUCTIVITY_VALUES, type ProductivityValue, type WebsiteCategory } from '../../src/classification/categories';
+import { classifyDomain } from '../../src/classification/classify-domain';
+import { summarizeWebsiteTime, type ProductivitySummary } from '../../src/classification/productivity-summary';
+import { deleteDomainOverride, loadDomainOverrides, saveDomainOverride, type DomainOverride } from '../../src/classification/settings-store';
 import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
 import type { TrackerState } from '../../src/tracking/types';
@@ -7,6 +11,7 @@ import type { TrackerState } from '../../src/tracking/types';
 interface PopupData {
   state: TrackerState | null;
   activeMsToday: number;
+  summary: ProductivitySummary;
   ready: boolean;
   error: boolean;
 }
@@ -26,22 +31,54 @@ function trackerStatus(state: TrackerState | null): { label: string; detail: str
   return { label: 'Not counting', detail: 'This page cannot be tracked', color: 'bg-[#777870]' };
 }
 
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 export default function App() {
-  const [data, setData] = useState<PopupData>({ state: null, activeMsToday: 0, ready: false, error: false });
+  const [data, setData] = useState<PopupData>({
+    state: null,
+    activeMsToday: 0,
+    summary: summarizeWebsiteTime([]),
+    ready: false,
+    error: false,
+  });
+  const [overrides, setOverrides] = useState<DomainOverride[]>([]);
+  const [draftCategory, setDraftCategory] = useState<WebsiteCategory>('Unknown');
+  const [draftProductivity, setDraftProductivity] = useState<ProductivityValue>('unknown');
+  const [customDomain, setCustomDomain] = useState('');
+  const [customCategory, setCustomCategory] = useState<WebsiteCategory>('Learning');
+  const [customProductivity, setCustomProductivity] = useState<ProductivityValue>('productive');
+  const [currentMessage, setCurrentMessage] = useState('');
+  const [managerMessage, setManagerMessage] = useState('');
 
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
       try {
         const now = Date.now();
-        const state = await activityStore.readState();
+        const [state, userOverrides] = await Promise.all([
+          activityStore.readState(),
+          loadDomainOverrides(),
+        ]);
         const { start, end } = localDayBounds(now);
         const records = await activityStore.listRecords(start, end);
         const storedMs = records.reduce((total, record) => total + record.durationMs, 0);
         const openMs = state?.intervalStartedAt !== null && state?.context
           ? Math.max(0, now - Math.max(state.intervalStartedAt, start))
           : 0;
-        if (mounted) setData({ state, activeMsToday: storedMs + openMs, ready: true, error: false });
+        const summaryRecords = records.map(({ domain, durationMs }) => ({ domain, durationMs }));
+        if (openMs > 0 && state?.context) summaryRecords.push({ domain: state.context.domain, durationMs: openMs });
+        if (mounted) {
+          setOverrides(userOverrides);
+          setData({
+            state,
+            activeMsToday: storedMs + openMs,
+            summary: summarizeWebsiteTime(summaryRecords, userOverrides),
+            ready: true,
+            error: false,
+          });
+        }
       } catch {
         if (mounted) setData((current) => ({ ...current, ready: true, error: true }));
       }
@@ -62,6 +99,61 @@ export default function App() {
 
   const status = trackerStatus(data.state);
   const active = Boolean(data.state && data.state.intervalStartedAt !== null && data.state.context);
+  const currentDomain = data.state?.context?.domain ?? '';
+  const classification = classifyDomain(currentDomain, overrides);
+
+  useEffect(() => {
+    setDraftCategory(classification.category);
+    setDraftProductivity(classification.productivity);
+  }, [classification.category, classification.productivity, currentDomain]);
+
+  const persistOverride = async (
+    domain: string,
+    category: WebsiteCategory,
+    productivity: ProductivityValue,
+    setMessage: (message: string) => void,
+  ) => {
+    try {
+      const next = await saveDomainOverride({ domain, category, productivity });
+      setOverrides(next);
+      setMessage(`Saved ${domain.trim()} on this device.`);
+      return true;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not save this website rule.');
+      return false;
+    }
+  };
+
+  const saveCurrentDomain = async () => {
+    if (!currentDomain) return;
+    await persistOverride(currentDomain, draftCategory, draftProductivity, setCurrentMessage);
+  };
+
+  const addCustomDomain = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const saved = await persistOverride(customDomain, customCategory, customProductivity, setManagerMessage);
+    if (saved) setCustomDomain('');
+  };
+
+  const removeOverride = async (domain: string) => {
+    try {
+      const next = await deleteDomainOverride(domain);
+      setOverrides(next);
+      setManagerMessage(`Removed the custom rule for ${domain}.`);
+    } catch {
+      setManagerMessage('Could not remove this website rule.');
+    }
+  };
+
+  const updateCategory = (category: WebsiteCategory, custom = false) => {
+    if (custom) {
+      setCustomCategory(category);
+      setCustomProductivity(category === 'Unknown' ? 'unknown' : defaultProductivityFor(category));
+      return;
+    }
+    setDraftCategory(category);
+    setDraftProductivity(category === 'Unknown' ? 'unknown' : defaultProductivityFor(category));
+  };
 
   return (
     <main className="popup-shell min-h-screen w-[360px] bg-[#111210] p-5 text-[#f2f0e9]">
@@ -89,7 +181,16 @@ export default function App() {
         <p className="mt-1 text-[11px] text-[#8e8d83]">
           {data.error ? 'Local activity storage could not be read.' : status.detail}
         </p>
-        <div className="mt-4 h-1 overflow-hidden rounded-full bg-[#282923]" aria-label="Activity totals are based on stored active intervals" />
+        <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.07] pt-3 text-[10px]">
+          <span className="text-[#85847a]">Productive <b className="ml-1 font-medium text-[#b3d783]">{!data.ready ? '—' : displayDuration(data.summary.productiveMs)}</b></span>
+          <span className="text-[#85847a]">Recreational <b className="ml-1 font-medium text-[#e6b278]">{!data.ready ? '—' : displayDuration(data.summary.recreationalMs)}</b></span>
+          <span className="text-[#85847a]">Neutral <b className="ml-1 font-medium text-[#c9c7bc]">{!data.ready ? '—' : displayDuration(data.summary.neutralMs)}</b></span>
+          <span className="text-[#85847a]">Unknown <b className="ml-1 font-medium text-[#c9c7bc]">{!data.ready ? '—' : displayDuration(data.summary.unknownMs)}</b></span>
+        </div>
+        <p className="mt-3 text-[10px] text-[#777870]">
+          Classified browsing ratio: {!data.ready || data.summary.productivityRatio === null ? '—' : `${Math.round(data.summary.productivityRatio * 100)}%`}
+        </p>
+        <p className="mt-1 text-[9px] leading-4 text-[#69685f]">Productive time ÷ productive, recreational, and neutral time. Unknown is excluded.</p>
       </section>
 
       <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">
@@ -99,13 +200,70 @@ export default function App() {
         </div>
         <div className="mt-3 flex items-center gap-3">
           <div className="grid size-9 place-items-center rounded-xl bg-[#252620] text-sm text-[#a8aa95]">◎</div>
-          <div>
-            <p className="text-sm font-medium">{data.state?.context?.domain ?? '—'}</p>
-            <p className="mt-0.5 text-[11px] text-[#777870]">Website categories arrive in Phase 2</p>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{currentDomain || '—'}</p>
+            <p className="mt-0.5 text-[11px] text-[#777870]">{classification.source === 'user' ? 'Your custom rule' : 'Default classification'}</p>
           </div>
-          <span className="ml-auto rounded-full border border-white/[0.08] px-2.5 py-1 text-[10px] text-[#929188]">Unclassified</span>
+          <span className="ml-auto shrink-0 rounded-full border border-white/[0.08] px-2.5 py-1 text-[10px] text-[#929188]">{classification.category}</span>
         </div>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <label className="text-[10px] text-[#87867d]">
+            Category
+            <select value={draftCategory} onChange={(event) => updateCategory(event.target.value as WebsiteCategory)} disabled={!currentDomain} className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[11px] text-[#d8d6cc] disabled:opacity-50">
+              {CATEGORY_DEFINITIONS.map(({ name }) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <label className="text-[10px] text-[#87867d]">
+            Browsing intent
+            <select value={draftProductivity} onChange={(event) => setDraftProductivity(event.target.value as ProductivityValue)} disabled={!currentDomain || draftCategory === 'Unknown'} className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[11px] capitalize text-[#d8d6cc] disabled:opacity-50">
+              {PRODUCTIVITY_VALUES.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}
+            </select>
+          </label>
+        </div>
+        <button type="button" onClick={() => void saveCurrentDomain()} disabled={!currentDomain} className="mt-3 w-full rounded-lg bg-[#c9ee8e] px-3 py-2 text-[11px] font-semibold text-[#20251b] disabled:opacity-40">
+          Save rule for this domain
+        </button>
+        {currentMessage && <p role="status" className="mt-2 text-[10px] text-[#b3d783]">{currentMessage}</p>}
+        <p className="mt-2 text-[10px] leading-4 text-[#777870]">Social media, coding, work, and communication start as neutral. Change the intent to match your use.</p>
       </section>
+
+      <details className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">
+        <summary className="cursor-pointer list-none text-xs font-medium text-[#c9c7bc]">Manage domains and custom rules ({overrides.length}) <span className="float-right text-[#777870]">⌄</span></summary>
+        <form onSubmit={(event) => void addCustomDomain(event)} className="mt-4 space-y-3">
+          <label className="block text-[10px] text-[#87867d]">
+            Add a domain
+            <input required value={customDomain} onChange={(event) => setCustomDomain(event.target.value)} placeholder="example.com" className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-[#111210] px-3 py-2 text-xs text-[#e2e0d7] placeholder:text-[#626159]" />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[10px] text-[#87867d]">
+              Category
+              <select value={customCategory} onChange={(event) => updateCategory(event.target.value as WebsiteCategory, true)} className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[11px] text-[#d8d6cc]">
+                {CATEGORY_DEFINITIONS.map(({ name }) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+            <label className="text-[10px] text-[#87867d]">
+              Browsing intent
+              <select value={customProductivity} onChange={(event) => setCustomProductivity(event.target.value as ProductivityValue)} disabled={customCategory === 'Unknown'} className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-[#111210] px-2 py-2 text-[11px] capitalize text-[#d8d6cc] disabled:opacity-50">
+                {PRODUCTIVITY_VALUES.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}
+              </select>
+            </label>
+          </div>
+          <button type="submit" className="w-full rounded-lg border border-white/[0.1] px-3 py-2 text-[11px] font-medium text-[#d8d6cc] hover:bg-white/[0.04]">Add or update domain</button>
+        </form>
+        {managerMessage && <p role="status" className="mt-3 text-[10px] text-[#b3d783]">{managerMessage}</p>}
+        <div className="mt-3 space-y-2">
+          {overrides.map((override) => (
+            <div key={override.domain} className="flex items-center gap-2 border-t border-white/[0.06] pt-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[11px] text-[#d8d6cc]">{override.domain}</p>
+                <p className="text-[10px] text-[#777870]">{override.category} · {override.productivity}</p>
+              </div>
+              <button type="button" onClick={() => void removeOverride(override.domain)} className="rounded-md px-2 py-1 text-[10px] text-[#c9927e] hover:bg-white/[0.04]">Remove</button>
+            </div>
+          ))}
+          {overrides.length === 0 && <p className="text-[10px] text-[#777870]">No custom domain rules saved yet.</p>}
+        </div>
+      </details>
 
       <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#191a17] p-4">
         <div className="flex items-start gap-3">
@@ -125,4 +283,3 @@ export default function App() {
     </main>
   );
 }
-

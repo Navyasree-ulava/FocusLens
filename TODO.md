@@ -13,10 +13,17 @@
 - [x] Persist atomic activity intervals and recover after worker/browser restarts.
 - [x] Show actual tracking state, hostname, and today's time in the popup.
 - [x] Add automated tests for tab changes, focus, idle, checkpointing, midnight, storage, and recovery.
-- [ ] Load the unpacked build in Chrome and verify permissions and live tracking.
+- [ ] Reload the updated extension and verify the popup remains in Tracking state while open.
+
+## Phase 2 — Classification
+- [x] Add all requested website categories and conservative domain defaults.
+- [x] Allow per-domain category and productive/recreational/neutral/unknown overrides.
+- [x] Add custom domain rules, persistence, and deletion.
+- [x] Aggregate actual stored time by category and intent, with a documented ratio formula.
+- [x] Test override precedence, input validation, and ratio calculations.
+- [ ] In the browser, save a current-domain override, reopen the popup, and verify it persists.
 
 ## Later phases
-- [ ] Phase 2: website categories, rules and user overrides.
 - [ ] Phase 3: YouTube metadata and playback tracking.
 - [ ] Phase 4: analytics dashboard from actual stored activity.
 - [ ] Phase 5: focus sessions, wellbeing settings and data controls.
