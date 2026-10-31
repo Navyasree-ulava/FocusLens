@@ -10,6 +10,7 @@ export default defineConfig({
     minimum_chrome_version: '116',
     permissions: ['storage', 'tabs', 'idle', 'alarms'],
     optional_permissions: ['notifications'],
+    optional_host_permissions: ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*'],
     host_permissions: ['https://www.youtube.com/*'],
     incognito: 'not_allowed',
     action: {

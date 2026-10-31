@@ -4,11 +4,15 @@ FocusLens is a local-first Chromium browser extension for understanding browsing
 
 ## Current status
 
-Phases 0–5 are implemented: active website and YouTube tracking, classification, an analytics dashboard, focus sessions, wellbeing settings, and local data controls. The popup shows actual stored time, current classifications, YouTube summaries, and focus controls. The dashboard reports daily trends, intent totals, visited websites, activity intervals, YouTube viewing, focus sessions, and settings. Website intervals and YouTube segments live in IndexedDB; rules and preferences live in `chrome.storage.local`. Website paths and searches are not collected. YouTube titles, channel names, canonical video IDs and playback state are stored locally for video reports.
+Phases 0–6 are implemented: active website and YouTube tracking, classification, an analytics dashboard, focus sessions, wellbeing settings, local data controls, and optional AI classification. AI is off by default. Website intervals and YouTube segments live in IndexedDB; rules and preferences live in `chrome.storage.local`. Website paths and searches are not collected. YouTube titles, channel names, canonical video IDs, playback state, and AI classifications are stored locally for reports.
 
 Coding, social media, professional work, and communication default to neutral intent. YouTube is categorized as Entertainment while its website-level intent stays neutral until individual videos are classified in Phase 3. Unknown domains remain unknown until the user adds a rule.
 
 Typecheck, lint, unit tests, and Chrome, Edge, and Brave-targeted builds pass. Real-browser checks for popup focus, website rules, YouTube playback, dashboard navigation, reminders, and privacy controls are still pending.
+
+## Optional AI setup
+
+Open the dashboard's **Settings** view, enter an OpenAI-compatible Responses API endpoint, a model name, and an API key, then select **Enable AI and save**. FocusLens requests access only to that endpoint's host. The API key stays in browser session storage and is cleared when the browser closes. AI requests happen only when you press **Classify with AI** for an unknown current YouTube video. The request contains its title, channel name, and Shorts status; it excludes the video ID, URL, watch history, and learning goals. Results must pass schema validation and have at least 60% confidence before they affect analytics. Use **Use as my classification** to save a result as a user override. Provider data handling terms apply.
 
 ## Requirements
 

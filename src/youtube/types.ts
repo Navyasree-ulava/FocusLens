@@ -49,5 +49,5 @@ export interface YouTubeSettings {
 
 export interface ClassifiedYouTubeSegment extends YouTubeSegment {
   category: YouTubeCategory;
-  classificationSource: 'goal' | 'user' | 'metadata' | 'short' | 'unknown';
+  classificationSource: 'goal' | 'user' | 'metadata' | 'short' | 'ai' | 'unknown';
 }

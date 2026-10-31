@@ -32,4 +32,8 @@
 - [x] Add daily time goal, global tracking pause, excluded domains, optional break and recreational-site reminders.
 - [x] Add local JSON export and delete-all-data controls.
 - [ ] In the browser, create and pause a focus session; verify domain exclusions and pause tracking; grant notifications only if testing reminders; verify export and delete confirmation.
-- [ ] Phase 6: optional, opt-in AI provider interface.
+- [x] Phase 6: optional OpenAI-compatible Responses provider, disabled by default.
+- [x] Require an explicit endpoint host permission and API key before enabling AI; keep the key in session storage.
+- [x] Send only current video title, channel name, and Shorts status after the user selects Classify with AI.
+- [x] Validate structured category, confidence, and reason; keep low-confidence results from changing reports until accepted.
+- [ ] Configure a provider in the browser and verify one unknown video classification and one user override.

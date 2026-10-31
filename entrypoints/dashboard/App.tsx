@@ -12,12 +12,16 @@ import type { YouTubeSegment } from '../../src/youtube/types';
 import { endFocusSession, focusSessionElapsedMs, pauseFocusSession, resumeFocusSession, startFocusSession, summarizeFocusSession } from '../../src/wellbeing/focus-sessions';
 import { DEFAULT_WELLBEING_SETTINGS, loadWellbeingSettings, saveWellbeingSettings } from '../../src/wellbeing/settings-store';
 import type { FocusSession, WellbeingSettings } from '../../src/wellbeing/types';
+import type { AIClassification } from '../../src/ai/types';
+import { DEFAULT_AI_SETTINGS, aiEndpointOrigin, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, saveAIAPIKey, saveAISettings } from '../../src/ai/settings';
+import type { AISettings } from '../../src/ai/types';
 
 type View = 'Overview' | 'Activity' | 'Websites' | 'YouTube' | 'Focus Sessions' | 'Settings';
 interface DashboardData {
   records: ActivityRecord[];
   focusRecords: ActivityRecord[];
   youtubeRecords: YouTubeSegment[];
+  aiClassifications: AIClassification[];
   overrides: DomainOverride[];
   tracker: TrackerState | null;
   todayMs: number;
@@ -35,7 +39,7 @@ const store = new IndexedDbActivityStore();
 const FOCUS_SESSION_END_ALARM = 'focuslens-focus-session-end';
 const emptyYouTube = summarizeYouTubeTime([]);
 const emptyData: DashboardData = {
-  records: [], focusRecords: [], youtubeRecords: [], overrides: [], tracker: null, todayMs: 0,
+  records: [], focusRecords: [], youtubeRecords: [], aiClassifications: [], overrides: [], tracker: null, todayMs: 0,
   daily: [], timeline: [], websites: [], youtubeSummary: emptyYouTube, sessions: [], wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
 };
 
@@ -61,9 +65,10 @@ export default function App() {
       try {
         const now = Date.now();
         const { start, end } = dateWindow(now, 7);
-        const [state, overrides, settings, records, youtubeRecords, sessions, wellbeing] = await Promise.all([
+        const [state, overrides, settings, records, youtubeRecords, sessions, wellbeing, aiClassifications] = await Promise.all([
           store.readState(), loadDomainOverrides(), loadYouTubeSettings(),
           store.listRecords(start, end), store.listYouTubeSegments(start, now + 1), store.listFocusSessions(), loadWellbeingSettings(),
+          store.listAIClassifications(),
         ]);
         const todayBounds = localDayBounds(now);
         const oldestSessionStart = sessions.reduce((oldest, session) => Math.min(oldest, session.startedAt), start);
@@ -82,13 +87,14 @@ export default function App() {
           records: withOpen,
           focusRecords: focusRecords === records ? withOpen : [...focusRecords, ...withOpen.filter((record) => record.id === 'current-open')],
           youtubeRecords,
+          aiClassifications,
           overrides,
           tracker: state,
           todayMs: todayStored + currentOpenMs,
           daily,
           timeline: buildTimeline(withOpen.filter((record) => record.endedAt > todayBounds.start)),
           websites: buildWebsiteUsage(withOpen, overrides),
-          youtubeSummary: summarizeYouTubeTime(youtubeRecords, settings),
+          youtubeSummary: summarizeYouTubeTime(youtubeRecords, settings, aiClassifications),
           sessions,
           wellbeing,
           loading: false,
@@ -240,6 +246,15 @@ function FocusSessionsView({
 function SettingsView({ settings, refresh }: { settings: WellbeingSettings; refresh: () => Promise<void> }) {
   const [excludedDraft, setExcludedDraft] = useState('');
   const [message, setMessage] = useState('');
+  const [aiSettings, setAiSettings] = useState<AISettings>(DEFAULT_AI_SETTINGS);
+  const [aiKey, setAiKey] = useState('');
+  const [aiKeyAvailable, setAiKeyAvailable] = useState(false);
+  useEffect(() => {
+    void Promise.all([loadAISettings(), loadAIAPIKey()]).then(([config, key]) => {
+      setAiSettings(config);
+      setAiKeyAvailable(Boolean(key));
+    });
+  }, []);
   const save = async (next: WellbeingSettings) => {
     try {
       const saved = await saveWellbeingSettings(next);
@@ -270,6 +285,35 @@ function SettingsView({ settings, refresh }: { settings: WellbeingSettings; refr
       await save({ ...settings, distractionReminders: true });
     } catch { setMessage('Could not enable notification permission.'); }
   };
+  const saveAIConfiguration = async (enable: boolean) => {
+    try {
+      if (!enable) {
+        const savedSettings = await loadAISettings();
+        const disabledSettings = await saveAISettings({ ...savedSettings, enabled: false });
+        setAiSettings(disabledSettings);
+        setAiKey('');
+        setAiKeyAvailable(false);
+        await browser.permissions.remove({ origins: [aiHostPermissionPattern(savedSettings.endpoint)] });
+        setMessage('AI classification is off. Its API key was cleared from this browser session.');
+        return;
+      }
+      const previousSettings = await loadAISettings();
+      const previousOrigin = aiEndpointOrigin(previousSettings.endpoint);
+      const origin = aiEndpointOrigin(aiSettings.endpoint);
+      if (!aiSettings.model.trim()) throw new Error('Enter a model name.');
+      const secret = aiKey.trim() || await loadAIAPIKey();
+      if (!secret) throw new Error('Enter an API key. The key stays in this browser session.');
+      const permitted = await browser.permissions.request({ origins: [aiHostPermissionPattern(aiSettings.endpoint)] });
+      if (!permitted) throw new Error('Provider permission was not granted. AI remains off.');
+      await saveAIAPIKey(secret);
+      const saved = await saveAISettings({ ...aiSettings, enabled: true });
+      if (previousOrigin !== origin) await browser.permissions.remove({ origins: [aiHostPermissionPattern(previousSettings.endpoint)] });
+      setAiSettings(saved);
+      setAiKey('');
+      setAiKeyAvailable(true);
+      setMessage('AI enabled. Classification runs only when you press Classify with AI.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save AI settings.'); }
+  };
   const exportData = async () => {
     try {
       const [database, localSettings] = await Promise.all([store.exportData(), browser.storage.local.get(null)]);
@@ -288,6 +332,9 @@ function SettingsView({ settings, refresh }: { settings: WellbeingSettings; refr
   const deleteData = async () => {
     if (!window.confirm('Delete all FocusLens activity, YouTube records, sessions, and settings from this browser? This cannot be undone.')) return;
     try {
+      const aiConfig = await loadAISettings();
+      await browser.permissions.remove({ origins: [aiHostPermissionPattern(aiConfig.endpoint)] });
+      await browser.permissions.remove({ permissions: ['notifications'] });
       await store.clearAllData();
       await Promise.all([browser.storage.local.clear(), browser.storage.session.clear()]);
       setMessage('All FocusLens data was deleted from this browser.');
@@ -313,5 +360,17 @@ function SettingsView({ settings, refresh }: { settings: WellbeingSettings; refr
       <div className="mt-5 flex flex-wrap gap-2"><button onClick={() => void exportData()} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Export local data</button><button onClick={() => void deleteData()} className="rounded-lg border border-[#bd765d]/30 px-3 py-2.5 text-xs text-[#d79880]">Delete all FocusLens data</button></div>
       {message && <p role="status" className="mt-4 text-xs text-[#b3d783]">{message}</p>}
     </Panel>
+    <div className="xl:col-span-2">
+      <Panel title="Optional AI classification" subtitle="Disabled by default. You decide which provider receives a request.">
+        <p className="rounded-xl border border-[#d8bd79]/20 bg-[#d8bd79]/[.05] p-3 text-[11px] leading-5 text-[#cfc6a1]">When enabled, AI is called only after you press <b>Classify with AI</b> on an unknown YouTube video. FocusLens sends that video's title, channel name, and Shorts status to the endpoint below. It does not send the video ID, URL, watch history, or learning goals. The provider's data handling policy applies. Your API key is kept in session storage and cleared when the browser closes.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="text-[10px] text-[#85867d]">OpenAI-compatible Responses API endpoint<input value={aiSettings.endpoint} onChange={(event) => setAiSettings((current) => ({ ...current, endpoint: event.target.value }))} placeholder="https://api.openai.com/v1/responses" className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
+          <label className="text-[10px] text-[#85867d]">Model<input value={aiSettings.model} onChange={(event) => setAiSettings((current) => ({ ...current, model: event.target.value }))} placeholder="Your provider's model name" className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
+          <label className="text-[10px] text-[#85867d] sm:col-span-2">API key<input type="password" autoComplete="off" value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder={aiKeyAvailable ? 'Key is set for this browser session · enter to replace' : 'Enter key · not stored across browser restarts'} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7] placeholder:text-[#626159]" /></label>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2"><button onClick={() => void saveAIConfiguration(true)} className="rounded-lg bg-[#c9ee8e] px-3 py-2.5 text-xs font-semibold text-[#20251b]">Enable AI and save</button>{aiSettings.enabled && <button onClick={() => void saveAIConfiguration(false)} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Disable AI and clear key</button>}<span className="self-center text-[10px] text-[#777870]">{aiSettings.enabled ? aiKeyAvailable ? 'Enabled for manual requests' : 'Enabled · API key needs re-entry' : 'Off'}</span></div>
+        {message && <p role="status" className="mt-3 text-xs text-[#b3d783]">{message}</p>}
+      </Panel>
+    </div>
   </div>;
 }

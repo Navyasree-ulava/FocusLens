@@ -1,5 +1,6 @@
 import { classifyYouTubeVideo } from './classify-video';
 import type { YouTubeCategory, YouTubeSegment, YouTubeSettings } from './types';
+import type { AIClassification } from '../ai/types';
 
 export interface YouTubeSummary {
   activeViewingMs: number;
@@ -36,6 +37,7 @@ const ENTERTAINMENT_CATEGORIES = new Set<YouTubeCategory>(['Entertainment', 'Mus
 export function summarizeYouTubeTime(
   records: readonly YouTubeSegment[],
   settings: YouTubeSettings = { learningGoals: [], overrides: [] },
+  aiClassifications: readonly AIClassification[] = [],
 ): YouTubeSummary {
   const categoryMs = Object.fromEntries(
     ['Technical Learning', 'Educational', 'Professional Development', 'News', 'Entertainment', 'Music', 'Gaming', 'Shorts / Casual Browsing', 'Unknown']
@@ -55,7 +57,8 @@ export function summarizeYouTubeTime(
 
   for (const record of records) {
     if (!Number.isFinite(record.durationMs) || record.durationMs <= 0) continue;
-    const category = classifyYouTubeVideo(record.metadata, settings).category;
+    const aiClassification = aiClassifications.find((item) => item.videoId === record.metadata.videoId);
+    const category = classifyYouTubeVideo(record.metadata, settings, aiClassification).category;
     categoryMs[category] += record.durationMs;
     if (record.playbackState === 'paused') summary.pausedMs += record.durationMs;
     else if (record.playbackState === 'buffering') summary.bufferingMs += record.durationMs;

@@ -83,6 +83,16 @@ describe('YouTube metadata and classification', () => {
     expect(classifyYouTubeVideo({ ...metadata, title: 'A day in my life' }, settings).category).toBe('Unknown');
   });
 
+  it('uses AI results only for ambiguous videos and leaves explicit user rules in control', () => {
+    const ai = { videoId: metadata.videoId!, category: 'Educational' as const, confidence: 0.9, reason: 'Educational video', classifiedAt: 10 };
+    expect(classifyYouTubeVideo({ ...metadata, title: 'A day in my life' }, settings, ai)).toEqual({ category: 'Educational', source: 'ai' });
+    expect(classifyYouTubeVideo({ ...metadata, title: 'A day in my life' }, settings, { ...ai, confidence: 0.59 })).toEqual({ category: 'Unknown', source: 'unknown' });
+    expect(classifyYouTubeVideo(metadata, { ...settings, overrides: [{ scope: 'video', key: metadata.videoId!, category: 'Music', updatedAt: 10 }] }, ai)).toEqual({ category: 'Music', source: 'user' });
+    expect(classifyYouTubeVideo({ ...metadata, title: 'React Hooks Tutorial for Beginners' }, settings, { ...ai, category: 'News' })).toEqual({ category: 'Technical Learning', source: 'metadata' });
+    const record = segment({ metadata: { ...metadata, title: 'A day in my life' }, durationMs: 5_000, endedAt: 6_000 });
+    expect(summarizeYouTubeTime([record], settings, [ai]).educationalViewingMs).toBe(5_000);
+  });
+
   it('labels Shorts as casual browsing unless a user rule or learning goal matches', () => {
     const short = { ...metadata, isShort: true, title: 'A silly dance clip' };
     expect(classifyYouTubeVideo(short, settings)).toEqual({ category: 'Shorts / Casual Browsing', source: 'short' });

@@ -14,6 +14,10 @@ import { endFocusSession, focusSessionElapsedMs, pauseFocusSession, resumeFocusS
 import { DEFAULT_WELLBEING_SETTINGS, loadWellbeingSettings, saveWellbeingSettings } from '../../src/wellbeing/settings-store';
 import type { FocusSession, WellbeingSettings } from '../../src/wellbeing/types';
 import type { ActivityRecord } from '../../src/tracking/types';
+import type { AIClassification, AISettings } from '../../src/ai/types';
+import { AI_API_KEY_SESSION_KEY, DEFAULT_AI_SETTINGS, loadAIAPIKey, loadAISettings } from '../../src/ai/settings';
+import { OpenAIResponsesProvider } from '../../src/ai/responses-provider';
+import { classifyYouTubeVideo } from '../../src/youtube/classify-video';
 
 interface PopupData {
   state: TrackerState | null;
@@ -26,6 +30,9 @@ interface PopupData {
   focusSession: FocusSession | null;
   wellbeing: WellbeingSettings;
   records: ActivityRecord[];
+  aiClassifications: AIClassification[];
+  aiSettings: AISettings;
+  hasAiKey: boolean;
 }
 
 const activityStore = new IndexedDbActivityStore();
@@ -61,6 +68,9 @@ export default function App() {
     focusSession: null,
     wellbeing: DEFAULT_WELLBEING_SETTINGS,
     records: [],
+    aiClassifications: [],
+    aiSettings: DEFAULT_AI_SETTINGS,
+    hasAiKey: false,
   });
   const [overrides, setOverrides] = useState<DomainOverride[]>([]);
   const [draftCategory, setDraftCategory] = useState<WebsiteCategory>('Unknown');
@@ -77,19 +87,23 @@ export default function App() {
   const [youtubeRuleCategory, setYouTubeRuleCategory] = useState<YouTubeCategory>('Educational');
   const [youtubeMessage, setYouTubeMessage] = useState('');
   const [focusGoalDraft, setFocusGoalDraft] = useState('Focused work');
+  const [aiMessage, setAiMessage] = useState('');
 
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
       try {
         const now = Date.now();
-        const [state, userOverrides, videoSettings, session, focusSessions, wellbeing] = await Promise.all([
+        const [state, userOverrides, videoSettings, session, focusSessions, wellbeing, aiSettings, aiClassifications, aiKeyValue] = await Promise.all([
           activityStore.readState(),
           loadDomainOverrides(),
           loadYouTubeSettings(),
           browser.storage.session.get('focuslens-youtube-current-state'),
           activityStore.listFocusSessions(),
           loadWellbeingSettings(),
+          loadAISettings(),
+          activityStore.listAIClassifications(),
+          browser.storage.session.get(AI_API_KEY_SESSION_KEY),
         ]);
         const { start, end } = localDayBounds(now);
         const records = await activityStore.listRecords(start, end);
@@ -128,6 +142,9 @@ export default function App() {
             focusSession: focusSessions.find((item) => item.status !== 'completed') ?? null,
             wellbeing,
             records: focusRecords,
+            aiClassifications,
+            aiSettings,
+            hasAiKey: typeof aiKeyValue[AI_API_KEY_SESSION_KEY] === 'string',
           });
         }
       } catch {
@@ -228,8 +245,10 @@ export default function App() {
   };
 
   const currentVideo = data.youtubePageState?.metadata;
-  const youtubeSummary = summarizeYouTubeTime(data.youtubeSegments, youtubeSettings);
+  const youtubeSummary = summarizeYouTubeTime(data.youtubeSegments, youtubeSettings, data.aiClassifications);
   const isCurrentYouTube = currentDomain === 'www.youtube.com';
+  const currentAiClassification = data.aiClassifications.find((item) => item.videoId === currentVideo?.videoId);
+  const currentVideoClassification = currentVideo ? classifyYouTubeVideo(currentVideo, youtubeSettings, currentAiClassification) : null;
   const focusSession = data.focusSession;
   const focusSummary = focusSession ? summarizeFocusSession(focusSession, data.records, overrides) : null;
 
@@ -257,6 +276,35 @@ export default function App() {
   const toggleTracking = async () => {
     const wellbeing = await saveWellbeingSettings({ ...data.wellbeing, trackingPaused: !data.wellbeing.trackingPaused });
     setData((current) => ({ ...current, wellbeing }));
+  };
+
+  const classifyCurrentWithAI = async () => {
+    if (!currentVideo?.videoId) return;
+    setAiMessage('Classifying this video…');
+    try {
+      const apiKey = await loadAIAPIKey();
+      if (!data.aiSettings.enabled || !apiKey) throw new Error('Enable AI and add an API key in Dashboard → Settings first.');
+      const provider = new OpenAIResponsesProvider({ ...data.aiSettings, apiKey });
+      const result = await provider.classify({
+        metadata: { title: currentVideo.title, channelName: currentVideo.channelName, isShort: currentVideo.isShort },
+      });
+      const classification: AIClassification = { videoId: currentVideo.videoId, ...result, classifiedAt: Date.now() };
+      await activityStore.saveAIClassification(classification);
+      const aiClassifications = await activityStore.listAIClassifications();
+      setData((current) => ({ ...current, aiClassifications }));
+      setAiMessage('AI classification saved locally.');
+    } catch (error) {
+      setAiMessage(error instanceof Error ? error.message : 'AI classification failed.');
+    }
+  };
+
+  const acceptAIClassification = async () => {
+    if (!currentAiClassification || !currentVideo?.videoId) return;
+    try {
+      const settings = await saveYouTubeOverride('video', currentVideo.videoId, currentAiClassification.category);
+      setYouTubeSettings(settings);
+      setAiMessage('Saved as your video classification.');
+    } catch { setAiMessage('Could not save your classification.'); }
   };
 
   const updateCategory = (category: WebsiteCategory, custom = false) => {
@@ -399,7 +447,14 @@ export default function App() {
           <p className="text-[#85847a]">Buffering <b className="ml-1 font-medium text-[#c9c7bc]">{displayDuration(youtubeSummary.bufferingMs)}</b></p>
           <p className="text-[#85847a]">Browsing <b className="ml-1 font-medium text-[#c9c7bc]">{displayDuration(youtubeSummary.browsingMs)}</b></p>
         </div>
-        {isCurrentYouTube && currentVideo && <p className="mt-3 truncate border-t border-white/[0.06] pt-3 text-[11px] text-[#c9c7bc]" title={currentVideo.title ?? undefined}>Now: {currentVideo.title ?? 'Unknown video'} · {currentVideo.channelName ?? 'Unknown channel'}</p>}
+        {isCurrentYouTube && currentVideo && <div className="mt-3 border-t border-white/[0.06] pt-3">
+          <p className="truncate text-[11px] text-[#c9c7bc]" title={currentVideo.title ?? undefined}>Now: {currentVideo.title ?? 'Unknown video'} · {currentVideo.channelName ?? 'Unknown channel'}</p>
+          <p className="mt-1 text-[10px] text-[#85867d]">{currentAiClassification ? `AI suggestion: ${currentAiClassification.category} · ${Math.round(currentAiClassification.confidence * 100)}% confidence` : `Category: ${currentVideoClassification?.category ?? 'Unknown'}`}</p>
+          {currentAiClassification && <><p className="mt-1 text-[10px] leading-4 text-[#777870]">{currentAiClassification.reason}</p><button type="button" onClick={() => void acceptAIClassification()} className="mt-2 rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#c9c7bc]">Use as my classification</button></>}
+          {currentVideoClassification?.category === 'Unknown' && <button type="button" onClick={() => void classifyCurrentWithAI()} disabled={!data.aiSettings.enabled || !data.hasAiKey || !currentVideo.videoId || !currentVideo.title || aiMessage === 'Classifying this video…'} className="mt-2 ml-2 rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#c9c7bc] disabled:opacity-40">Classify with AI</button>}
+          {currentVideoClassification?.category === 'Unknown' && (!data.aiSettings.enabled || !data.hasAiKey) && <p className="mt-1 text-[9px] text-[#777870]">AI is off or needs its session key. Configure it in Dashboard → Settings.</p>}
+          {aiMessage && <p role="status" className="mt-2 text-[10px] text-[#b3d783]">{aiMessage}</p>}
+        </div>}
         {mostWatchedVideos(data.youtubeSegments, 3).map((video) => <a key={video.videoId} href={video.videoUrl} target="_blank" rel="noreferrer" className="mt-2 block truncate text-[10px] text-[#aaa99f] hover:text-[#c9ee8e]">{video.title ?? video.videoId} · {displayDuration(video.durationMs)}</a>)}
         {data.youtubeSegments.length === 0 && <p className="mt-2 text-[10px] text-[#777870]">Your local YouTube activity will appear here.</p>}
       </section>

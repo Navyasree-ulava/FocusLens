@@ -1,8 +1,9 @@
 import { YOUTUBE_CATEGORIES, type ClassifiedYouTubeSegment, type YouTubeCategory, type YouTubeSegment, type YouTubeSettings, type YouTubeVideoMetadata } from './types';
+import type { AIClassification } from '../ai/types';
 
 export interface YouTubeClassification {
   category: YouTubeCategory;
-  source: 'goal' | 'user' | 'metadata' | 'short' | 'unknown';
+  source: 'goal' | 'user' | 'metadata' | 'short' | 'ai' | 'unknown';
 }
 
 const TECHNICAL_TERMS = [
@@ -42,6 +43,7 @@ export function normalizeYouTubeChannel(channelName: string | null): string {
 export function classifyYouTubeVideo(
   metadata: YouTubeVideoMetadata,
   settings: YouTubeSettings = { learningGoals: [], overrides: [] },
+  aiClassification?: AIClassification,
 ): YouTubeClassification {
   const videoOverride = metadata.videoId
     ? settings.overrides.find((item) => item.scope === 'video' && item.key === metadata.videoId)
@@ -72,14 +74,18 @@ export function classifyYouTubeVideo(
   if (matchesAny(content, MUSIC_TERMS)) return { category: 'Music', source: 'metadata' };
   if (matchesAny(content, EDUCATIONAL_TERMS)) return { category: 'Educational', source: 'metadata' };
   if (matchesAny(content, ENTERTAINMENT_TERMS)) return { category: 'Entertainment', source: 'metadata' };
+  if (aiClassification?.videoId === metadata.videoId && aiClassification.confidence >= 0.6) {
+    return { category: aiClassification.category, source: 'ai' };
+  }
   return { category: 'Unknown', source: 'unknown' };
 }
 
 export function classifyYouTubeSegment(
   segment: YouTubeSegment,
   settings: YouTubeSettings,
+  aiClassification?: AIClassification,
 ): ClassifiedYouTubeSegment {
-  const classification = classifyYouTubeVideo(segment.metadata, settings);
+  const classification = classifyYouTubeVideo(segment.metadata, settings, aiClassification);
   return { ...segment, category: classification.category, classificationSource: classification.source };
 }
 

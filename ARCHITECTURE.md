@@ -46,6 +46,14 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 - **Reminders:** Break reminders count actual stored foreground active time. Recreational-site check-ins count time only on domains classified as recreational by the current rules. Both remain off by default. The extension requests the optional `notifications` permission only after the user enables a reminder.
 - **Data controls:** Export downloads a JSON snapshot containing local activity, YouTube metadata, focus sessions, tracker state, and settings. Delete-all clears all FocusLens IndexedDB stores and extension-local/session settings after an explicit in-app confirmation.
 
+## Phase 6 optional AI
+
+- **Provider contract:** `src/ai/types.ts` defines a provider-neutral request/result contract. `OpenAIResponsesProvider` implements the OpenAI-compatible Responses API with strict structured output, response validation, and a request timeout.
+- **Opt-in boundary:** AI starts disabled. Settings require an endpoint, model, and API key. Enabling requests optional host access for that endpoint origin; only HTTPS endpoints or loopback HTTP endpoints are accepted. The key lives in `chrome.storage.session` and is removed when AI is disabled or the browser session ends.
+- **Request scope:** No AI request runs automatically. The user clicks **Classify with AI** for an unknown current YouTube video. Only title, channel name, and Shorts status are sent. Video ID, URL, browsing history, and learning goals are excluded.
+- **Result handling:** Responses are validated against the allowed category list, confidence range, and reason length. AI results only classify videos that remain Unknown under user rules and metadata heuristics, and only when confidence is at least 0.6. Results are stored locally. Saving one as a user rule gives the user's choice precedence over AI and metadata.
+- **Failure behavior:** Network errors, timeouts, non-2xx responses, invalid JSON, and invalid structured fields surface an error and do not change local classification. Tests inject fetch responses and do not contact a real provider.
+
 ## Planned modules
 
 - **Analytics:** Aggregations over stored intervals only. Ratios use classified browsing time and must be labeled as browsing classifications, not human productivity.

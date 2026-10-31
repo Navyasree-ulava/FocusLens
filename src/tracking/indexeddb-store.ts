@@ -1,9 +1,10 @@
 import type { ActivityRecord, ActivityStore, TrackerState } from './types';
 import type { YouTubeSegment } from '../youtube/types';
 import type { FocusSession } from '../wellbeing/types';
+import type { AIClassification } from '../ai/types';
 
 const DATABASE_NAME = 'focuslens-local';
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 const STATE_KEY = 'tracker-state';
 
 interface StoredState {
@@ -100,28 +101,47 @@ export class IndexedDbActivityStore implements ActivityStore {
     return sessions.toSorted((left, right) => right.startedAt - left.startedAt);
   }
 
+  async saveAIClassification(classification: AIClassification): Promise<void> {
+    const database = await this.openDatabase();
+    const transaction = database.transaction('aiClassifications', 'readwrite');
+    const done = transactionResult(transaction);
+    transaction.objectStore('aiClassifications').put(classification);
+    await done;
+  }
+
+  async listAIClassifications(): Promise<AIClassification[]> {
+    const database = await this.openDatabase();
+    const transaction = database.transaction('aiClassifications', 'readonly');
+    const done = transactionResult(transaction);
+    const values = await requestResult(transaction.objectStore('aiClassifications').getAll()) as AIClassification[];
+    await done;
+    return values;
+  }
+
   async clearAllData(): Promise<void> {
     const database = await this.openDatabase();
-    const transaction = database.transaction(['activity', 'metadata', 'youtube', 'focusSessions'], 'readwrite');
+    const transaction = database.transaction(['activity', 'metadata', 'youtube', 'focusSessions', 'aiClassifications'], 'readwrite');
     const done = transactionResult(transaction);
     transaction.objectStore('activity').clear();
     transaction.objectStore('metadata').clear();
     transaction.objectStore('youtube').clear();
     transaction.objectStore('focusSessions').clear();
+    transaction.objectStore('aiClassifications').clear();
     await done;
   }
 
-  async exportData(): Promise<{ activity: ActivityRecord[]; youtube: YouTubeSegment[]; focusSessions: FocusSession[]; trackerState: TrackerState | null }> {
+  async exportData(): Promise<{ activity: ActivityRecord[]; youtube: YouTubeSegment[]; focusSessions: FocusSession[]; aiClassifications: AIClassification[]; trackerState: TrackerState | null }> {
     const database = await this.openDatabase();
-    const transaction = database.transaction(['activity', 'metadata', 'youtube', 'focusSessions'], 'readonly');
+    const transaction = database.transaction(['activity', 'metadata', 'youtube', 'focusSessions', 'aiClassifications'], 'readonly');
     const done = transactionResult(transaction);
     const activityPromise = requestResult(transaction.objectStore('activity').getAll()) as Promise<ActivityRecord[]>;
     const youtubePromise = requestResult(transaction.objectStore('youtube').getAll()) as Promise<YouTubeSegment[]>;
     const focusSessionsPromise = requestResult(transaction.objectStore('focusSessions').getAll()) as Promise<FocusSession[]>;
+    const aiPromise = requestResult(transaction.objectStore('aiClassifications').getAll()) as Promise<AIClassification[]>;
     const statePromise = requestResult(transaction.objectStore('metadata').get(STATE_KEY)) as Promise<StoredState | undefined>;
-    const [activity, youtube, focusSessions, state] = await Promise.all([activityPromise, youtubePromise, focusSessionsPromise, statePromise]);
+    const [activity, youtube, focusSessions, aiClassifications, state] = await Promise.all([activityPromise, youtubePromise, focusSessionsPromise, aiPromise, statePromise]);
     await done;
-    return { activity, youtube, focusSessions, trackerState: state?.value ?? null };
+    return { activity, youtube, focusSessions, aiClassifications, trackerState: state?.value ?? null };
   }
 
   private openDatabase(): Promise<IDBDatabase> {
@@ -146,6 +166,9 @@ export class IndexedDbActivityStore implements ActivityStore {
         }
         if (!database.objectStoreNames.contains('focusSessions')) {
           database.createObjectStore('focusSessions', { keyPath: 'id' });
+        }
+        if (!database.objectStoreNames.contains('aiClassifications')) {
+          database.createObjectStore('aiClassifications', { keyPath: 'videoId' });
         }
       };
       request.onsuccess = () => {
