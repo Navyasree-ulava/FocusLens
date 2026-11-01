@@ -40,3 +40,6 @@
 - [x] Phase 7: Add an Insights dashboard view for productive browsing hours, recreational-site totals, week-over-week browsing change, and time matched to saved YouTube learning goals.
 - [x] Cover insight calculations with local-date, user-rule, and playback tests.
 - [ ] Open Insights in a browser with and without activity and learning goals; verify figures and empty states.
+- [x] Phase 8: Simplify the popup to today's active browsing total and website-category breakdown, with a single dashboard link.
+- [x] Clip activity to the current day, prevent overlapping or invalid intervals from inflating the displayed daily total, and cover this with a regression test.
+- [ ] Reload the popup and confirm today's total and category breakdown stay within the elapsed day and update while browsing.

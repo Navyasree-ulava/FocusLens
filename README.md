@@ -4,11 +4,11 @@ FocusLens is a local-first Chromium browser extension for understanding browsing
 
 ## Current status
 
-Phases 0–7 are implemented: active website and YouTube tracking, classification, an analytics dashboard and Insights view, focus sessions, wellbeing settings, local data controls, and optional AI classification. Insights calculate productive browsing hours, recreational-site totals, week-over-week browsing time, and YouTube time matching saved learning goals. AI is off by default. Website intervals and YouTube segments live in IndexedDB; rules and preferences live in `chrome.storage.local`. Website paths and searches are not collected. YouTube titles, channel names, canonical video IDs, playback state, and AI classifications are stored locally for reports.
+Phases 0–8 are implemented: active website and YouTube tracking, classification, an analytics dashboard and Insights view, focus sessions, wellbeing settings, local data controls, optional AI classification, and a simplified daily-usage popup. The popup shows today's active total and category breakdown; detailed controls remain in the dashboard. Its summary clips intervals to the current day and counts overlapping time once. Insights calculate productive browsing hours, recreational-site totals, week-over-week browsing time, and YouTube time matching saved learning goals. AI is off by default. Website intervals and YouTube segments live in IndexedDB; rules and preferences live in `chrome.storage.local`. Website paths and searches are not collected. YouTube titles, channel names, canonical video IDs, playback state, and AI classifications are stored locally for reports.
 
 Coding, social media, professional work, and communication default to neutral intent. YouTube is categorized as Entertainment while its website-level intent stays neutral until individual videos are classified in Phase 3. Unknown domains remain unknown until the user adds a rule.
 
-Typecheck, lint, unit tests, and Chrome, Edge, and Brave-targeted builds pass. Real-browser checks for popup focus, website rules, YouTube playback, dashboard navigation and Insights, reminders, and privacy controls are still pending.
+Typecheck, lint, unit tests, and Chrome, Edge, and Brave-targeted builds pass. Real-browser checks for the simplified popup, website rules, YouTube playback, dashboard navigation and Insights, reminders, and privacy controls are still pending.
 
 ## Optional AI setup
 
