@@ -46,3 +46,6 @@
 - [x] Phase 9: Expand defaults for classroom, education, Google/Microsoft work tools, and common communication platforms.
 - [x] Restore per-website category and intent editing in the dashboard Websites view so unknown domains can be corrected without making the popup complex.
 - [ ] Change an unknown website to a category in the dashboard, reload, and confirm the saved rule changes daily category totals.
+- [x] Phase 10: Add Gemini, Grok, and OpenAI provider choices for opt-in AI website suggestions.
+- [x] Send only the selected unknown hostname, validate the structured response, and require the user to accept the suggestion before storing a website rule.
+- [ ] Configure a Gemini or Grok API key in Dashboard → Settings and classify one selected Unknown domain; verify the request succeeds and the accepted category persists.

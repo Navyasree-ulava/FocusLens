@@ -14,8 +14,9 @@ import { endFocusSession, focusSessionElapsedMs, pauseFocusSession, resumeFocusS
 import { DEFAULT_WELLBEING_SETTINGS, loadWellbeingSettings, saveWellbeingSettings } from '../../src/wellbeing/settings-store';
 import type { FocusSession, WellbeingSettings } from '../../src/wellbeing/types';
 import type { AIClassification } from '../../src/ai/types';
-import { DEFAULT_AI_SETTINGS, aiEndpointOrigin, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, saveAIAPIKey, saveAISettings } from '../../src/ai/settings';
-import type { AISettings } from '../../src/ai/types';
+import { AI_PROVIDER_ENDPOINTS, DEFAULT_AI_SETTINGS, aiEndpointOrigin, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, saveAIAPIKey, saveAISettings } from '../../src/ai/settings';
+import { AI_PROVIDERS, type AISettings } from '../../src/ai/types';
+import { AIWebsiteClassifier, type AIWebsiteClassification } from '../../src/ai/website-provider';
 
 type View = 'Overview' | 'Activity' | 'Websites' | 'YouTube' | 'Focus Sessions' | 'Insights' | 'Settings';
 interface DashboardData {
@@ -131,6 +132,15 @@ export default function App() {
   const refresh = async () => {
     setRefreshNonce((current) => current + 1);
   };
+  const classifyWebsiteWithAI = async (domain: string) => {
+    const [settings, apiKey] = await Promise.all([loadAISettings(), loadAIAPIKey()]);
+    if (!settings.enabled || !apiKey) throw new Error('Enable AI and add your provider key in Settings first.');
+    return new AIWebsiteClassifier(settings, apiKey).classify(domain);
+  };
+  const saveWebsiteAIClassification = async (domain: string, suggestion: AIWebsiteClassification) => {
+    await saveDomainOverride({ domain, category: suggestion.category, productivity: defaultProductivityFor(suggestion.category) });
+    await refresh();
+  };
   const todayProgress = Math.min(100, Math.round(data.todayMs / (data.wellbeing.dailyGoalMinutes * 60_000) * 100));
   return <div className="min-h-screen bg-[#111210] text-[#f2f0e9]">
     <aside className="fixed inset-y-0 left-0 hidden w-60 border-r border-white/[0.07] bg-[#151613] px-5 py-6 lg:block">
@@ -166,7 +176,7 @@ export default function App() {
         {view === 'Websites' && <div className="mt-7"><WebsiteTable websites={data.websites} detailed onSaveRule={async (domain, category, productivity) => {
           await saveDomainOverride({ domain, category, productivity });
           await refresh();
-        }} /></div>}
+        }} onClassifyUnknown={classifyWebsiteWithAI} onUseSuggestion={saveWebsiteAIClassification} /></div>}
         {view === 'YouTube' && <div className="mt-7 grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeSummary} videos={topVideos} detailed /><Panel title="Most watched channels" subtitle="Ranked by stored playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records yet.</Empty>}</Panel></div>}
         {view === 'Focus Sessions' && <FocusSessionsView sessions={data.sessions} records={data.focusRecords} overrides={data.overrides} refresh={refresh} />}
         {view === 'Insights' && <InsightsView insights={data.insights} />}
@@ -213,21 +223,37 @@ function IntentBars({ summary }: { summary: ReturnType<typeof summarizeWebsiteTi
   return <div>{total > 0 ? <div className="mt-6 flex h-3 overflow-hidden rounded-full bg-[#252620]">{entries.map(([label, value, color]) => <div key={label} title={`${label} ${duration(value)}`} className={color} style={{ width: `${value / total * 100}%` }} />)}</div> : <Empty>No classified browsing time yet.</Empty>}<div className="mt-5 space-y-3">{entries.map(([label, value, color]) => <div key={label} className="flex items-center justify-between text-xs"><span className="flex items-center gap-2 text-[#999a91]"><i className={`size-2 rounded-full ${color}`} />{label}</span><b className="font-medium text-[#d3d1c7]">{duration(value)}</b></div>)}<div className="flex justify-between border-t border-white/[.06] pt-3 text-[10px] text-[#777870]"><span>Unknown</span><span>{duration(summary.unknownMs)}</span></div></div></div>;
 }
 
-function WebsiteTable({ websites, detailed = false, onSaveRule }: { websites: WebsiteUsage[]; detailed?: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void> }) {
-  return <Panel title={detailed ? 'Websites and categories' : 'Top websites'} subtitle={detailed ? 'Change a category or browsing intent to fit how you use a site.' : 'Ranked by active time on this device'}>{websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site, index) => <WebsiteRow key={site.domain} site={site} index={index} editable={detailed} onSaveRule={onSaveRule} />)}</div> : <Empty>No website activity recorded yet. Sites you visit will appear here.</Empty>}</Panel>;
+function WebsiteTable({ websites, detailed = false, onSaveRule, onClassifyUnknown, onUseSuggestion }: { websites: WebsiteUsage[]; detailed?: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void>; onClassifyUnknown?: (domain: string) => Promise<AIWebsiteClassification>; onUseSuggestion?: (domain: string, suggestion: AIWebsiteClassification) => Promise<void> }) {
+  return <Panel title={detailed ? 'Websites and categories' : 'Top websites'} subtitle={detailed ? 'Change categories to match how you use a site. AI suggestions are optional.' : 'Ranked by active time on this device'}>{websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site, index) => <WebsiteRow key={site.domain} site={site} index={index} editable={detailed} onSaveRule={onSaveRule} onClassifyUnknown={onClassifyUnknown} onUseSuggestion={onUseSuggestion} />)}</div> : <Empty>No website activity recorded yet. Sites you visit will appear here.</Empty>}</Panel>;
 }
 
-function WebsiteRow({ site, index, editable, onSaveRule }: { site: WebsiteUsage; index: number; editable: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void> }) {
+function WebsiteRow({ site, index, editable, onSaveRule, onClassifyUnknown, onUseSuggestion }: { site: WebsiteUsage; index: number; editable: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void>; onClassifyUnknown?: (domain: string) => Promise<AIWebsiteClassification>; onUseSuggestion?: (domain: string, suggestion: AIWebsiteClassification) => Promise<void> }) {
   const [category, setCategory] = useState<WebsiteCategory>(site.category);
   const [productivity, setProductivity] = useState<ProductivityValue>(site.productivity);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [suggestion, setSuggestion] = useState<AIWebsiteClassification | null>(null);
+  const [classifying, setClassifying] = useState(false);
   useEffect(() => { setCategory(site.category); setProductivity(site.productivity); }, [site.category, site.productivity]);
   const save = async () => {
     if (!onSaveRule) return;
     setSaving(true);
     try { await onSaveRule(site.domain, category, productivity); setMessage('Saved'); }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save this category.'); }
+    finally { setSaving(false); }
+  };
+  const classify = async () => {
+    if (!onClassifyUnknown) return;
+    setClassifying(true);
+    try { setSuggestion(await onClassifyUnknown(site.domain)); setMessage('AI suggestion is ready. Review before accepting.'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not classify this site.'); }
+    finally { setClassifying(false); }
+  };
+  const acceptSuggestion = async () => {
+    if (!suggestion || !onUseSuggestion) return;
+    setSaving(true);
+    try { await onUseSuggestion(site.domain, suggestion); setSuggestion(null); setMessage('Saved your category.'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save the suggested category.'); }
     finally { setSaving(false); }
   };
   return <div className="flex items-start gap-3 py-3">
@@ -243,7 +269,15 @@ function WebsiteRow({ site, index, editable, onSaveRule }: { site: WebsiteUsage;
             {PRODUCTIVITY_VALUES.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}
           </select>
         </div>
-        <div className="mt-2 flex items-center justify-between"><span role="status" className="text-[10px] text-[#b3d783]">{message}</span><button type="button" onClick={() => void save()} disabled={saving || (category === site.category && productivity === site.productivity)} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#d8d6cc] disabled:opacity-40">{saving ? 'Saving…' : 'Save category'}</button></div>
+        <div className="mt-2 flex items-center justify-between gap-2"><span role="status" className="min-w-0 text-[10px] text-[#b3d783]">{message}</span><button type="button" onClick={() => void save()} disabled={saving || (category === site.category && productivity === site.productivity)} className="shrink-0 rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#d8d6cc] disabled:opacity-40">{saving ? 'Saving…' : 'Save category'}</button></div>
+        {site.category === 'Unknown' && onClassifyUnknown && <div className="mt-2">
+          {!suggestion ? <button type="button" onClick={() => void classify()} disabled={classifying} className="rounded-lg border border-[#c9ee8e]/20 px-2.5 py-1.5 text-[10px] text-[#c9ee8e] disabled:opacity-50">{classifying ? 'Checking…' : 'Suggest category with AI'}</button> : <div className="rounded-lg border border-[#c9ee8e]/15 bg-[#c9ee8e]/[.04] p-3">
+            <p className="text-[11px] text-[#d8d6cc]">Suggestion: <b>{suggestion.category}</b> · {Math.round(suggestion.confidence * 100)}%</p>
+            <p className="mt-1 text-[10px] text-[#999a91]">{suggestion.reason}</p>
+            <div className="mt-2 flex gap-2"><button type="button" onClick={() => void acceptSuggestion()} disabled={saving} className="rounded-lg bg-[#c9ee8e] px-2.5 py-1.5 text-[10px] font-semibold text-[#20251b]">{saving ? 'Saving…' : 'Use suggestion'}</button><button type="button" onClick={() => setSuggestion(null)} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#aaa99f]">Dismiss</button></div>
+          </div>}
+          <p className="mt-1 text-[9px] leading-4 text-[#777870]">Only this hostname is sent when you click. It is saved only if you accept the result.</p>
+        </div>}
       </>}
     </div>
   </div>;
@@ -361,7 +395,7 @@ function SettingsView({ settings, refresh }: { settings: WellbeingSettings; refr
       const previousOrigin = aiEndpointOrigin(previousSettings.endpoint);
       const origin = aiEndpointOrigin(aiSettings.endpoint);
       if (!aiSettings.model.trim()) throw new Error('Enter a model name.');
-      const secret = aiKey.trim() || await loadAIAPIKey();
+      const secret = aiKey.trim() || (previousSettings.provider === aiSettings.provider ? await loadAIAPIKey() : null);
       if (!secret) throw new Error('Enter an API key. The key stays in this browser session.');
       const permitted = await browser.permissions.request({ origins: [aiHostPermissionPattern(aiSettings.endpoint)] });
       if (!permitted) throw new Error('Provider permission was not granted. AI remains off.');
@@ -421,14 +455,15 @@ function SettingsView({ settings, refresh }: { settings: WellbeingSettings; refr
       {message && <p role="status" className="mt-4 text-xs text-[#b3d783]">{message}</p>}
     </Panel>
     <div className="xl:col-span-2">
-      <Panel title="Optional AI classification" subtitle="Disabled by default. You decide which provider receives a request.">
-        <p className="rounded-xl border border-[#d8bd79]/20 bg-[#d8bd79]/[.05] p-3 text-[11px] leading-5 text-[#cfc6a1]">When enabled, AI is called only after you press <b>Classify with AI</b> on an unknown YouTube video. FocusLens sends that video's title, channel name, and Shorts status to the endpoint below. It does not send the video ID, URL, watch history, or learning goals. The provider's data handling policy applies. Your API key is kept in session storage and cleared when the browser closes.</p>
+      <Panel title="Optional AI website suggestions" subtitle="Disabled by default. Suggestions run only when you request them for one website.">
+        <p className="rounded-xl border border-[#d8bd79]/20 bg-[#d8bd79]/[.05] p-3 text-[11px] leading-5 text-[#cfc6a1]">On the Websites page, press <b>Suggest category with AI</b> for a single Unknown domain. Only that hostname is sent. Review the category and accept it before it becomes your saved rule. The provider's data policy and any free-tier quota or billing terms apply. The API key stays in this browser session and is cleared when the browser closes.</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label className="text-[10px] text-[#85867d]">OpenAI-compatible Responses API endpoint<input value={aiSettings.endpoint} onChange={(event) => setAiSettings((current) => ({ ...current, endpoint: event.target.value }))} placeholder="https://api.openai.com/v1/responses" className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
-          <label className="text-[10px] text-[#85867d]">Model<input value={aiSettings.model} onChange={(event) => setAiSettings((current) => ({ ...current, model: event.target.value }))} placeholder="Your provider's model name" className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
+          <label className="text-[10px] text-[#85867d]">Provider<select value={aiSettings.provider} onChange={(event) => { const provider = event.target.value as AISettings['provider']; setAiSettings((current) => ({ ...current, provider, endpoint: AI_PROVIDER_ENDPOINTS[provider] })); }} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]">{AI_PROVIDERS.map((provider) => <option key={provider} value={provider}>{provider === 'gemini' ? 'Google Gemini' : provider === 'grok' ? 'xAI Grok' : 'OpenAI'}</option>)}</select></label>
+          <label className="text-[10px] text-[#85867d]">Model<input value={aiSettings.model} onChange={(event) => setAiSettings((current) => ({ ...current, model: event.target.value }))} placeholder={aiSettings.provider === 'gemini' ? 'Gemini model name from AI Studio' : aiSettings.provider === 'grok' ? 'Grok model name from xAI Console' : 'OpenAI model name'} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
+          <label className="text-[10px] text-[#85867d] sm:col-span-2">API endpoint<input value={aiSettings.endpoint} onChange={(event) => setAiSettings((current) => ({ ...current, endpoint: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
           <label className="text-[10px] text-[#85867d] sm:col-span-2">API key<input type="password" autoComplete="off" value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder={aiKeyAvailable ? 'Key is set for this browser session · enter to replace' : 'Enter key · not stored across browser restarts'} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7] placeholder:text-[#626159]" /></label>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2"><button onClick={() => void saveAIConfiguration(true)} className="rounded-lg bg-[#c9ee8e] px-3 py-2.5 text-xs font-semibold text-[#20251b]">Enable AI and save</button>{aiSettings.enabled && <button onClick={() => void saveAIConfiguration(false)} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Disable AI and clear key</button>}<span className="self-center text-[10px] text-[#777870]">{aiSettings.enabled ? aiKeyAvailable ? 'Enabled for manual requests' : 'Enabled · API key needs re-entry' : 'Off'}</span></div>
+        <div className="mt-4 flex flex-wrap gap-2"><button onClick={() => void saveAIConfiguration(true)} className="rounded-lg bg-[#c9ee8e] px-3 py-2.5 text-xs font-semibold text-[#20251b]">Enable AI and save</button>{aiSettings.enabled && <button onClick={() => void saveAIConfiguration(false)} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Disable AI and clear key</button>}<span className="self-center text-[10px] text-[#777870]">{aiSettings.enabled ? aiKeyAvailable ? 'Ready for manual suggestions' : 'Enabled · API key needs re-entry' : 'Off'}</span></div>
         {message && <p role="status" className="mt-3 text-xs text-[#b3d783]">{message}</p>}
       </Panel>
     </div>

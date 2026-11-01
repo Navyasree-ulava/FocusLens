@@ -18,6 +18,10 @@ export interface AIClassificationProvider {
 
 export interface AISettings {
   enabled: boolean;
+  provider: AIProvider;
   endpoint: string;
   model: string;
 }
+
+export const AI_PROVIDERS = ['gemini', 'grok', 'openai'] as const;
+export type AIProvider = (typeof AI_PROVIDERS)[number];

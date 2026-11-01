@@ -12,7 +12,7 @@ Typecheck, lint, unit tests, and Chrome, Edge, and Brave-targeted builds pass. R
 
 ## Optional AI setup
 
-Open the dashboard's **Settings** view, enter an OpenAI-compatible Responses API endpoint, a model name, and an API key, then select **Enable AI and save**. FocusLens requests access only to that endpoint's host. The API key stays in browser session storage and is cleared when the browser closes. AI requests happen only when you press **Classify with AI** for an unknown current YouTube video. The request contains its title, channel name, and Shorts status; it excludes the video ID, URL, watch history, and learning goals. Results must pass schema validation and have at least 60% confidence before they affect analytics. Use **Use as my classification** to save a result as a user override. Provider data handling terms apply.
+Open the dashboard's **Settings** view, choose Google Gemini or xAI Grok, enter a model name and API key, then select **Enable AI and save**. OpenAI remains available too. FocusLens requests access only to the selected provider host. The API key stays in browser session storage and is cleared when the browser closes. AI does not classify sites automatically: on **Websites**, choose **Suggest category with AI** for one Unknown domain. Only that hostname is sent. Review the result and choose **Use suggestion** before it is saved as a local rule. Provider model availability, free quotas, pricing, and data handling depend on your provider account and its current terms.
 
 ## Requirements
 

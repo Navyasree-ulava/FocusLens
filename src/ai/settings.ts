@@ -1,16 +1,24 @@
 import { z } from 'zod';
-import type { AISettings } from './types';
+import { AI_PROVIDERS, type AIProvider, type AISettings } from './types';
 
 export const AI_SETTINGS_KEY = 'focuslens.ai-settings';
 export const AI_API_KEY_SESSION_KEY = 'focuslens.ai-api-key';
 export const DEFAULT_AI_SETTINGS: AISettings = {
   enabled: false,
-  endpoint: 'https://api.openai.com/v1/responses',
+  provider: 'gemini',
+  endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   model: '',
+};
+
+export const AI_PROVIDER_ENDPOINTS: Record<AIProvider, string> = {
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  grok: 'https://api.x.ai/v1/responses',
+  openai: 'https://api.openai.com/v1/responses',
 };
 
 const settingsSchema = z.object({
   enabled: z.boolean().default(false),
+  provider: z.enum(AI_PROVIDERS).default(DEFAULT_AI_SETTINGS.provider),
   endpoint: z.string().trim().url().max(500).default(DEFAULT_AI_SETTINGS.endpoint),
   model: z.string().trim().max(100).default(''),
 }).refine(({ endpoint }) => {
@@ -24,7 +32,12 @@ const settingsSchema = z.object({
 }, { message: 'Endpoint cannot include credentials, a query, or a fragment.', path: ['endpoint'] });
 
 export function parseAISettings(value: unknown): AISettings {
-  const parsed = settingsSchema.safeParse(value);
+  const candidate = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const endpoint = typeof candidate.endpoint === 'string' ? candidate.endpoint : DEFAULT_AI_SETTINGS.endpoint;
+  const inferredProvider: AIProvider = endpoint.includes('generativelanguage.googleapis.com')
+    ? 'gemini'
+    : endpoint.includes('api.x.ai') ? 'grok' : 'openai';
+  const parsed = settingsSchema.safeParse({ ...candidate, provider: candidate.provider ?? inferredProvider });
   return parsed.success ? parsed.data : { ...DEFAULT_AI_SETTINGS };
 }
 
@@ -60,4 +73,8 @@ export function aiEndpointOrigin(endpoint: string): string {
 export function aiHostPermissionPattern(endpoint: string): string {
   const url = new URL(settingsSchema.parse({ ...DEFAULT_AI_SETTINGS, endpoint }).endpoint);
   return `${url.protocol}//${url.hostname}/*`;
+}
+
+export function endpointForProvider(provider: AIProvider): string {
+  return AI_PROVIDER_ENDPOINTS[provider];
 }

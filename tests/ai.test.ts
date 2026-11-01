@@ -1,8 +1,9 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { IndexedDbActivityStore } from '../src/tracking/indexeddb-store';
-import { AI_API_KEY_SESSION_KEY, AI_SETTINGS_KEY, aiEndpointOrigin, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, parseAISettings, saveAIAPIKey, saveAISettings } from '../src/ai/settings';
+import { AI_API_KEY_SESSION_KEY, AI_SETTINGS_KEY, aiEndpointOrigin, aiHostPermissionPattern, endpointForProvider, loadAIAPIKey, loadAISettings, parseAISettings, saveAIAPIKey, saveAISettings } from '../src/ai/settings';
 import { OpenAIResponsesProvider } from '../src/ai/responses-provider';
+import { AIWebsiteClassifier } from '../src/ai/website-provider';
 
 beforeEach(async () => {
   await browser.storage.local.clear();
@@ -12,6 +13,10 @@ beforeEach(async () => {
 describe('AI provider settings', () => {
   it('keeps AI disabled by default and rejects insecure remote endpoints', () => {
     expect(parseAISettings(undefined).enabled).toBe(false);
+    expect(parseAISettings(undefined).provider).toBe('gemini');
+    expect(endpointForProvider('gemini')).toContain('generativelanguage.googleapis.com');
+    expect(endpointForProvider('grok')).toBe('https://api.x.ai/v1/responses');
+    expect(parseAISettings({ enabled: false, endpoint: 'https://api.openai.com/v1/responses', model: '' }).provider).toBe('openai');
     expect(parseAISettings({ enabled: true, endpoint: 'http://example.com/v1/responses', model: 'x' })).toMatchObject({ enabled: false });
     expect(parseAISettings({ enabled: true, endpoint: 'https://user:pass@example.com/v1/responses', model: 'x' })).toMatchObject({ enabled: false });
     expect(() => aiEndpointOrigin('http://example.com/v1/responses')).toThrow();
@@ -21,14 +26,49 @@ describe('AI provider settings', () => {
   });
 
   it('keeps the API key in session storage and clears it when AI is disabled', async () => {
-    await saveAISettings({ enabled: false, endpoint: 'https://api.openai.com/v1/responses', model: 'gpt-example' });
+    await saveAISettings({ enabled: false, provider: 'openai', endpoint: 'https://api.openai.com/v1/responses', model: 'gpt-example' });
     await saveAIAPIKey('session-secret-key');
     expect(await loadAISettings()).toMatchObject({ enabled: false, model: 'gpt-example' });
     expect(await loadAIAPIKey()).toBe('session-secret-key');
     expect((await browser.storage.local.get(null))[AI_API_KEY_SESSION_KEY]).toBeUndefined();
     expect((await browser.storage.local.get(AI_SETTINGS_KEY))[AI_SETTINGS_KEY]).toMatchObject({ enabled: false });
-    await saveAISettings({ enabled: false, endpoint: 'https://api.openai.com/v1/responses', model: '' });
+    await saveAISettings({ enabled: false, provider: 'openai', endpoint: 'https://api.openai.com/v1/responses', model: '' });
     expect(await loadAIAPIKey()).toBeNull();
+  });
+});
+
+describe('AI website classification', () => {
+  it('sends only the selected hostname to Gemini and validates the suggested category', async () => {
+    let requestBody = '';
+    let authorization = '';
+    const classifier = new AIWebsiteClassifier({
+      enabled: true,
+      provider: 'gemini',
+      endpoint: endpointForProvider('gemini'),
+      model: 'gemini-test',
+    }, 'gemini-test-key', async (_input, init) => {
+      requestBody = String(init?.body);
+      authorization = new Headers(init?.headers).get('Authorization') ?? '';
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ category: 'Academic', confidence: 0.94, reason: 'The hostname is a classroom platform.' }) } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    await expect(classifier.classify('https://classroom.vendor.edu/course/private-path?student=1')).resolves.toEqual({
+      category: 'Academic', confidence: 0.94, reason: 'The hostname is a classroom platform.',
+    });
+    expect(authorization).toBe('Bearer gemini-test-key');
+    const body = JSON.parse(requestBody) as { messages: { content: string }[]; response_format: unknown };
+    expect(body.messages[1]?.content).toContain('classroom.vendor.edu');
+    expect(body.messages[1]?.content).not.toContain('private-path');
+    expect(body.messages[1]?.content).not.toContain('student=1');
+    expect(body.response_format).toBeDefined();
+  });
+
+  it('supports Grok Responses and rejects invalid categories', async () => {
+    const classifier = new AIWebsiteClassifier({ enabled: true, provider: 'grok', endpoint: endpointForProvider('grok'), model: 'grok-test' }, 'grok-test-key', async () => new Response(JSON.stringify({
+      output_text: JSON.stringify({ category: 'Not a category', confidence: 0.8, reason: 'Invalid test result.' }),
+    }), { status: 200 }));
+    await expect(classifier.classify('unknown.example')).rejects.toThrow('invalid website category');
   });
 });
 
