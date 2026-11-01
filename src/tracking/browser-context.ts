@@ -26,7 +26,10 @@ export function contextFromWindow(
 }
 
 export async function readBrowserContext(allowBrowserPopupFocus = false): Promise<BrowserContextSnapshot> {
-  const window = await browser.windows.getLastFocused({ populate: true });
+  // Action popups may be surfaced as a focused popup window without tabs.
+  // Ask for the last normal browser window so opening our own popup cannot
+  // replace the active website with an empty extension window.
+  const window = await browser.windows.getLastFocused({ populate: true, windowTypes: ['normal'] });
   return contextFromWindow(window, allowBrowserPopupFocus);
 }
 

@@ -7,6 +7,7 @@ import { deleteLearningGoal, deleteYouTubeOverride, loadYouTubeSettings, parseYo
 import { youtubeSegmentSchema } from '../src/youtube/validation';
 import { readPlaybackState, readYouTubeMetadata } from '../src/youtube/metadata';
 import { YouTubeSegmentTracker } from '../src/youtube/tracker';
+import { isYouTubeHost } from '../src/youtube/hosts';
 import type { YouTubePageState, YouTubeSegment, YouTubeSettings } from '../src/youtube/types';
 
 const metadata = {
@@ -38,6 +39,13 @@ beforeEach(async () => {
 });
 
 describe('YouTube metadata and classification', () => {
+  it('recognizes both the YouTube apex and www host', () => {
+    expect(isYouTubeHost('youtube.com')).toBe(true);
+    expect(isYouTubeHost('www.youtube.com')).toBe(true);
+    expect(isYouTubeHost('m.youtube.com')).toBe(false);
+    expect(isYouTubeHost('youtube.com.attacker.example')).toBe(false);
+  });
+
   it('extracts only the canonical video ID URL and detects Shorts paths', () => {
     const document = {
       querySelector: (selector: string) => selector === 'title'

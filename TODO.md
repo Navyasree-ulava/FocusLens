@@ -56,3 +56,6 @@
 - [x] Phase 12: Add YouTube video category editing and optional Gemini/Grok suggestions for ambiguous videos.
 - [x] Keep video suggestions review-before-save and store accepted results locally; provider requests include only title, channel, and Shorts status.
 - [ ] Configure a Gemini or Grok key and model in Dashboard → Settings; suggest and accept a category for an Unknown video and verify the report updates.
+- [x] Phase 13: Preserve active-tab context when the browser action popup is focused, and enable YouTube capture on both apex and `www` hosts.
+- [x] Add regression tests for popup-focus context recovery and YouTube host matching.
+- [ ] Reload the updated extension in Chrome and confirm the popup reports Tracking and today's usage increases on a `youtube.com` page.

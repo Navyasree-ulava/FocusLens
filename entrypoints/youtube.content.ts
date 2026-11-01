@@ -12,7 +12,7 @@ const MEDIA_EVENTS = [
 ];
 
 export default defineContentScript({
-  matches: ['https://www.youtube.com/*'],
+  matches: ['https://youtube.com/*', 'https://www.youtube.com/*'],
   runAt: 'document_idle',
   main() {
     let activeInBrowser = false;

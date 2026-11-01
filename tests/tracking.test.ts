@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IndexedDbActivityStore } from '../src/tracking/indexeddb-store';
 import { TrackingEngine } from '../src/tracking/engine';
-import { contextFromWindow, getTrackableDomain } from '../src/tracking/browser-context';
+import { contextFromWindow, getTrackableDomain, readBrowserContext } from '../src/tracking/browser-context';
 import { localDayBounds, splitIntervalAtLocalMidnights } from '../src/tracking/time';
 import type { BrowserSnapshot } from '../src/tracking/types';
 
@@ -127,6 +127,22 @@ describe('tracking engine', () => {
       focused: true,
       context: { tabId: 7, windowId: 12, domain: 'focus.example' },
     });
+  });
+
+  it('reads the last normal browser window when the extension popup is open', async () => {
+    const getLastFocused = vi.spyOn(browser.windows, 'getLastFocused').mockResolvedValue({
+      focused: false,
+      id: 12,
+      incognito: false,
+      type: 'normal',
+      tabs: [{ active: true, id: 7, incognito: false, url: 'https://youtube.com/watch?v=abcdefghijk' }],
+    } as never);
+    await expect(readBrowserContext(true)).resolves.toEqual({
+      focused: true,
+      context: { tabId: 7, windowId: 12, domain: 'youtube.com' },
+    });
+    expect(getLastFocused).toHaveBeenCalledWith({ populate: true, windowTypes: ['normal'] });
+    getLastFocused.mockRestore();
   });
 });
 

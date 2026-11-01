@@ -8,6 +8,7 @@ import { activeDurationBetween } from '../src/wellbeing/active-time';
 import { classifyDomain } from '../src/classification/classify-domain';
 import { loadDomainOverrides } from '../src/classification/settings-store';
 import { endFocusSession, focusSessionElapsedMs, pauseFocusSession } from '../src/wellbeing/focus-sessions';
+import { isYouTubeHost } from '../src/youtube/hosts';
 
 const IDLE_THRESHOLD_SECONDS = 60;
 const IDLE_THRESHOLD_MS = IDLE_THRESHOLD_SECONDS * 1_000;
@@ -46,7 +47,7 @@ export default defineBackground(() => {
     return workQueue;
   };
 
-  const isYouTubeTab = (context: { domain: string } | null | undefined): boolean => context?.domain === 'www.youtube.com';
+  const isYouTubeTab = (context: { domain: string } | null | undefined): boolean => isYouTubeHost(context?.domain);
 
   const sendYouTubeContext = async (
     previous: TrackerState | null,
@@ -228,7 +229,7 @@ export default defineBackground(() => {
     const senderUrl = sender.url ?? sender.tab?.url;
     if (!parsed.success || sender.tab?.id === undefined || sender.tab.incognito) return false;
     try {
-      if (!senderUrl || new URL(senderUrl).hostname !== 'www.youtube.com') return false;
+      if (!senderUrl || !isYouTubeHost(new URL(senderUrl).hostname)) return false;
     } catch {
       return false;
     }
@@ -239,7 +240,7 @@ export default defineBackground(() => {
         void store.readState().then((state) => {
           const active = Boolean(
             state && state.intervalStartedAt !== null && state.focused && !state.idle &&
-            state.context?.tabId === tabId && state.context?.domain === 'www.youtube.com',
+            state.context?.tabId === tabId && isYouTubeHost(state.context?.domain),
           );
           sendResponse({ active, observedAt: Date.now() });
         }).catch(() => sendResponse({ active: false, observedAt: Date.now() }));
@@ -267,7 +268,7 @@ export default defineBackground(() => {
         void store.readState().then(async (state) => {
           const active = requestedActive && Boolean(
             state && state.intervalStartedAt !== null && state.focused && !state.idle &&
-            state.context?.tabId === tabId && state.context?.domain === 'www.youtube.com',
+            state.context?.tabId === tabId && isYouTubeHost(state.context?.domain),
           );
           const now = Date.now();
           await browser.storage.session.set({
