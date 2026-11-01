@@ -30,7 +30,19 @@ export async function readBrowserContext(allowBrowserPopupFocus = false): Promis
   // Ask for the last normal browser window so opening our own popup cannot
   // replace the active website with an empty extension window.
   const window = await browser.windows.getLastFocused({ populate: true, windowTypes: ['normal'] });
-  return contextFromWindow(window, allowBrowserPopupFocus);
+  const snapshot = contextFromWindow(window, allowBrowserPopupFocus);
+  if (!allowBrowserPopupFocus || snapshot.context || window.id === undefined || window.incognito) return snapshot;
+
+  // Some Chromium builds return the normal window without populated tabs when
+  // an action popup owns focus. Query active tabs by window ID as a fallback.
+  const activeTabs = await browser.tabs.query({ active: true });
+  const activeTab = activeTabs.find((tab) => tab.windowId === window.id);
+  if (!activeTab || activeTab.id === undefined || activeTab.incognito) return snapshot;
+  const domain = getTrackableDomain(activeTab.url);
+  return {
+    focused: true,
+    context: domain ? { tabId: activeTab.id, windowId: window.id, domain } : null,
+  };
 }
 
 export function getTrackableDomain(rawUrl: string | undefined): string | null {
