@@ -37,3 +37,6 @@
 - [x] Send only current video title, channel name, and Shorts status after the user selects Classify with AI.
 - [x] Validate structured category, confidence, and reason; keep low-confidence results from changing reports until accepted.
 - [ ] Configure a provider in the browser and verify one unknown video classification and one user override.
+- [x] Phase 7: Add an Insights dashboard view for productive browsing hours, recreational-site totals, week-over-week browsing change, and time matched to saved YouTube learning goals.
+- [x] Cover insight calculations with local-date, user-rule, and playback tests.
+- [ ] Open Insights in a browser with and without activity and learning goals; verify figures and empty states.

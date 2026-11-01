@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatMinutes } from '../../src/format';
 import { summarizeWebsiteTime } from '../../src/classification/productivity-summary';
 import { loadDomainOverrides, type DomainOverride } from '../../src/classification/settings-store';
-import { buildDailyUsage, buildTimeline, buildWebsiteUsage, type DailyUsage, type TimelineEntry, type WebsiteUsage } from '../../src/analytics/dashboard';
+import { buildDailyUsage, buildDashboardInsights, buildTimeline, buildWebsiteUsage, type DailyUsage, type DashboardInsights, type TimelineEntry, type WebsiteUsage } from '../../src/analytics/dashboard';
 import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
 import type { ActivityRecord, TrackerState } from '../../src/tracking/types';
@@ -16,7 +16,7 @@ import type { AIClassification } from '../../src/ai/types';
 import { DEFAULT_AI_SETTINGS, aiEndpointOrigin, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, saveAIAPIKey, saveAISettings } from '../../src/ai/settings';
 import type { AISettings } from '../../src/ai/types';
 
-type View = 'Overview' | 'Activity' | 'Websites' | 'YouTube' | 'Focus Sessions' | 'Settings';
+type View = 'Overview' | 'Activity' | 'Websites' | 'YouTube' | 'Focus Sessions' | 'Insights' | 'Settings';
 interface DashboardData {
   records: ActivityRecord[];
   focusRecords: ActivityRecord[];
@@ -29,6 +29,7 @@ interface DashboardData {
   timeline: TimelineEntry[];
   websites: WebsiteUsage[];
   youtubeSummary: YouTubeSummary;
+  insights: DashboardInsights;
   sessions: FocusSession[];
   wellbeing: WellbeingSettings;
   loading: boolean;
@@ -38,9 +39,10 @@ interface DashboardData {
 const store = new IndexedDbActivityStore();
 const FOCUS_SESSION_END_ALARM = 'focuslens-focus-session-end';
 const emptyYouTube = summarizeYouTubeTime([]);
+const emptyInsights: DashboardInsights = { productiveHour: null, biggestDistraction: null, weeklyChangeMs: 0, thisWeekMs: 0, previousWeekMs: 0, learningGoals: [] };
 const emptyData: DashboardData = {
   records: [], focusRecords: [], youtubeRecords: [], aiClassifications: [], overrides: [], tracker: null, todayMs: 0,
-  daily: [], timeline: [], websites: [], youtubeSummary: emptyYouTube, sessions: [], wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
+  daily: [], timeline: [], websites: [], youtubeSummary: emptyYouTube, insights: emptyInsights, sessions: [], wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
 };
 
 function duration(ms: number): string {
@@ -64,7 +66,7 @@ export default function App() {
     const refresh = async () => {
       try {
         const now = Date.now();
-        const { start, end } = dateWindow(now, 7);
+        const { start, end } = dateWindow(now, 14);
         const [state, overrides, settings, records, youtubeRecords, sessions, wellbeing, aiClassifications] = await Promise.all([
           store.readState(), loadDomainOverrides(), loadYouTubeSettings(),
           store.listRecords(start, end), store.listYouTubeSegments(start, now + 1), store.listFocusSessions(), loadWellbeingSettings(),
@@ -93,8 +95,9 @@ export default function App() {
           todayMs: todayStored + currentOpenMs,
           daily,
           timeline: buildTimeline(withOpen.filter((record) => record.endedAt > todayBounds.start)),
-          websites: buildWebsiteUsage(withOpen, overrides),
+          websites: buildWebsiteUsage(withOpen.filter((record) => record.endedAt > dateWindow(now, 7).start), overrides),
           youtubeSummary: summarizeYouTubeTime(youtubeRecords, settings, aiClassifications),
+          insights: buildDashboardInsights(withOpen, youtubeRecords, now, overrides, settings, aiClassifications),
           sessions,
           wellbeing,
           loading: false,
@@ -132,7 +135,7 @@ export default function App() {
     <aside className="fixed inset-y-0 left-0 hidden w-60 border-r border-white/[0.07] bg-[#151613] px-5 py-6 lg:block">
       <div className="flex items-center gap-3"><span className="brand-mark grid size-9 place-items-center rounded-xl font-bold">F</span><div><p className="font-semibold tracking-tight">FocusLens</p><p className="text-[10px] tracking-[.16em] text-[#777870]">YOUR TIME, IN FOCUS</p></div></div>
       <p className="mt-12 px-3 text-[10px] font-semibold uppercase tracking-[.14em] text-[#696a62]">Workspace</p>
-      <nav className="mt-3 space-y-1">{(['Overview', 'Activity', 'Websites', 'YouTube', 'Focus Sessions', 'Settings'] as View[]).map((item) => <button key={item} onClick={() => setView(item)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a] hover:bg-white/[.03]'}`}><span className="text-xs">{item === 'Overview' ? '◫' : item === 'Activity' ? '◷' : item === 'Websites' ? '◎' : item === 'YouTube' ? '▷' : item === 'Settings' ? '⚙' : '◴'}</span>{item}</button>)}</nav>
+      <nav className="mt-3 space-y-1">{(['Overview', 'Activity', 'Websites', 'YouTube', 'Focus Sessions', 'Insights', 'Settings'] as View[]).map((item) => <button key={item} onClick={() => setView(item)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a] hover:bg-white/[.03]'}`}><span className="text-xs">{item === 'Overview' ? '◫' : item === 'Activity' ? '◷' : item === 'Websites' ? '◎' : item === 'YouTube' ? '▷' : item === 'Insights' ? '✧' : item === 'Settings' ? '⚙' : '◴'}</span>{item}</button>)}</nav>
       <div className="absolute bottom-6 left-5 right-5 rounded-xl border border-white/[.07] bg-[#191a17] p-3"><p className="text-xs font-medium">Local by design</p><p className="mt-1 text-[10px] leading-4 text-[#777870]">Your activity stays in this browser profile.</p></div>
     </aside>
     <main className="mx-auto max-w-7xl px-5 py-7 lg:ml-60 lg:px-10 lg:py-9">
@@ -140,7 +143,7 @@ export default function App() {
         <div><p className="text-xs text-[#8f9087]">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1 className="mt-2 text-3xl font-semibold tracking-[-.05em]">{view}</h1><p className="mt-1 text-sm text-[#85867d]">A clear view of where your browsing time goes.</p></div>
         <div className="flex items-center gap-2 rounded-full border border-white/[.08] bg-[#191a17] px-3 py-2 text-xs text-[#aaa99f]"><span className="size-2 rounded-full bg-[#a9da7b]" />{status}</div>
       </header>
-      <nav className="mt-4 flex gap-2 overflow-auto lg:hidden">{(['Overview', 'Activity', 'Websites', 'YouTube', 'Focus Sessions', 'Settings'] as View[]).map((item) => <button key={item} onClick={() => setView(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a]'}`}>{item}</button>)}</nav>
+      <nav className="mt-4 flex gap-2 overflow-auto lg:hidden">{(['Overview', 'Activity', 'Websites', 'YouTube', 'Focus Sessions', 'Insights', 'Settings'] as View[]).map((item) => <button key={item} onClick={() => setView(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a]'}`}>{item}</button>)}</nav>
       {data.error && <div role="alert" className="mt-6 rounded-xl border border-[#bd765d]/30 bg-[#bd765d]/10 p-4 text-sm text-[#e4ac97]">FocusLens could not read local activity. Reload the dashboard to try again.</div>}
       {data.loading ? <div className="py-20 text-center text-sm text-[#777870]">Loading local activity…</div> : <>
         {view === 'Overview' && <>
@@ -162,6 +165,7 @@ export default function App() {
         {view === 'Websites' && <div className="mt-7"><WebsiteTable websites={data.websites} detailed /></div>}
         {view === 'YouTube' && <div className="mt-7 grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeSummary} videos={topVideos} detailed /><Panel title="Most watched channels" subtitle="Ranked by stored playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records yet.</Empty>}</Panel></div>}
         {view === 'Focus Sessions' && <FocusSessionsView sessions={data.sessions} records={data.focusRecords} overrides={data.overrides} refresh={refresh} />}
+        {view === 'Insights' && <InsightsView insights={data.insights} />}
         {view === 'Settings' && <SettingsView settings={data.wellbeing} refresh={refresh} />}
       </>}
       <footer className="mt-10 border-t border-white/[.07] py-5 text-center text-[10px] text-[#67685f]">Statistics are calculated from stored activity on this device. Browsing ratio describes site classifications, not personal productivity.</footer>
@@ -171,6 +175,24 @@ export default function App() {
 
 function Metric({ title, value, note, tone }: { title: string; value: string; note: string; tone?: 'green' | 'orange' }) {
   return <section className="rounded-2xl border border-white/[.07] bg-[#191a17] p-5"><p className="text-xs text-[#85867d]">{title}</p><p className={`mt-4 text-3xl font-semibold tracking-[-.05em] tabular-nums ${tone === 'green' ? 'text-[#c4e995]' : tone === 'orange' ? 'text-[#e6b278]' : ''}`}>{value}</p><p className="mt-2 text-[10px] text-[#6f7068]">{note}</p></section>;
+}
+
+function InsightsView({ insights }: { insights: DashboardInsights }) {
+  const changePercent = insights.previousWeekMs > 0
+    ? Math.round((insights.weeklyChangeMs / insights.previousWeekMs) * 100)
+    : null;
+  const hourLabel = (hour: number) => new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' });
+  return <div className="mt-7 space-y-5">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <Metric title="Most focused hour" value={insights.productiveHour ? hourLabel(insights.productiveHour.hour) : '—'} note={insights.productiveHour ? `${duration(insights.productiveHour.durationMs)} of classified productive browsing this week` : 'No productive browsing time classified yet'} tone="green" />
+      <Metric title="Largest distraction source" value={insights.biggestDistraction?.domain ?? '—'} note={insights.biggestDistraction ? `${duration(insights.biggestDistraction.durationMs)} classified as recreational this week` : 'No recreational domains classified this week'} tone="orange" />
+      <Metric title="Browsing vs last week" value={changePercent === null ? '—' : `${insights.weeklyChangeMs > 0 ? '+' : ''}${changePercent}%`} note={`${duration(insights.thisWeekMs)} this week · ${duration(insights.previousWeekMs)} previous week`} />
+    </div>
+    <Panel title="Learning goals" subtitle="YouTube playing time matched to your saved goal phrases · last 7 days">
+      {insights.learningGoals.length ? <div className="divide-y divide-white/[.06]">{insights.learningGoals.map(({ goal, durationMs }) => <div key={goal} className="flex items-center justify-between gap-4 py-3"><span className="truncate text-xs">{goal}</span><span className="shrink-0 text-xs tabular-nums text-[#c4e995]">{duration(durationMs)}</span></div>)}</div> : <Empty>Add learning goals in the YouTube view to see matched video time here.</Empty>}
+    </Panel>
+    <p className="px-1 text-[10px] leading-5 text-[#777870]">Insights describe stored browsing patterns and your own classifications. The focused hour uses domains marked productive; it does not measure your work quality. Week comparisons use local calendar days.</p>
+  </div>;
 }
 
 function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {

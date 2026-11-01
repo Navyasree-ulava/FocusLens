@@ -11,6 +11,7 @@ Implement phases sequentially. Automated build, lint, typecheck, and phase tests
 | 4 — Dashboard | Overview, activity, websites, YouTube analytics and timeline | Analytics reconcile with stored records; true empty states | Automated checks complete; browser UI check pending |
 | 5 — Wellbeing | Focus sessions, goals, configurable reminders, privacy controls/export/delete | Session summaries, settings, exclusions, and active-time reminders tested | Automated checks complete; permission and browser UI check pending |
 | 6 — AI (optional) | Provider abstraction, opt-in ambiguous classification, structured confidence and feedback | Disabled by default; explicit provider permission; structured response and failure cases tested | Automated checks complete; provider opt-in smoke check pending |
+| 7 — Insights | Best classified productive hour, largest recreational source, weekly comparison, YouTube learning-goal time | Calculations use stored intervals, user classifications, local calendar weeks, and playback time; empty states are honest | Implemented; browser dashboard check pending |
 
 ## Phase 0 decisions
 
@@ -43,3 +44,4 @@ Implement phases sequentially. Automated build, lint, typecheck, and phase tests
 2. The idle API does not expose exact last-input timestamps. Excluding the full threshold can undercount active time near the transition.
 3. Alarm delivery can be delayed; large observation gaps are intentionally undercounted.
 4. Chromium derivatives need independent smoke checks despite sharing a build target.
+5. Insights describe browsing classifications and goal phrase matches; they are estimates based on available local metadata, not measures of work quality or learning outcomes.

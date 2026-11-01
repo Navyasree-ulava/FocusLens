@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDailyUsage, buildTimeline, buildWebsiteUsage } from '../src/analytics/dashboard';
+import { buildDailyUsage, buildDashboardInsights, buildTimeline, buildWebsiteUsage } from '../src/analytics/dashboard';
 import type { ActivityRecord } from '../src/tracking/types';
 
 const localDate = (year: number, month: number, day: number, hour = 12) => new Date(year, month, day, hour).getTime();
@@ -28,5 +28,35 @@ describe('dashboard analytics', () => {
     const entries = [record('old', 'old.example', 1, 5), record('new', 'new.example', 9, 1)];
     expect(buildTimeline(entries).map((item) => item.domain)).toEqual(['new.example', 'old.example']);
     expect(buildTimeline([])).toEqual([]);
+  });
+
+  it('builds weekly insights from classified intervals and goal-matched playback', () => {
+    const now = localDate(2026, 2, 20, 12);
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    const daysAgo = (days: number, hour = 9) => {
+      const date = new Date(today); date.setDate(date.getDate() - days); date.setHours(hour);
+      return date.getTime();
+    };
+    const records = [
+      record('productive-morning', 'work.test', daysAgo(1, 9), 2 * 60 * 60_000),
+      record('productive-afternoon', 'work.test', daysAgo(2, 14), 60 * 60_000),
+      record('recreation', 'fun.test', daysAgo(1, 16), 4 * 60 * 60_000),
+      record('previous-week', 'fun.test', daysAgo(9), 10 * 60 * 60_000),
+    ];
+    const youtube = [{
+      id: 'goal-video', startedAt: daysAgo(1), endedAt: daysAgo(1) + 20 * 60_000, durationMs: 20 * 60_000,
+      playbackState: 'playing' as const,
+      metadata: { videoId: 'python-video', title: 'Python for beginners', channelName: 'Code class', videoUrl: 'https://youtube.com/watch?v=python-video', isShort: false },
+    }];
+    const insights = buildDashboardInsights(records, youtube, now, [
+      { domain: 'work.test', category: 'Professional Work', productivity: 'productive', updatedAt: now },
+      { domain: 'fun.test', category: 'Entertainment', productivity: 'recreational', updatedAt: now },
+    ], { learningGoals: ['Python'], overrides: [] });
+
+    expect(insights.productiveHour?.hour).toBe(9);
+    expect(insights.biggestDistraction).toEqual({ domain: 'fun.test', durationMs: 4 * 60 * 60_000 });
+    expect(insights.thisWeekMs).toBe(7 * 60 * 60_000);
+    expect(insights.previousWeekMs).toBe(10 * 60 * 60_000);
+    expect(insights.learningGoals).toEqual([{ goal: 'Python', durationMs: 20 * 60_000 }]);
   });
 });
