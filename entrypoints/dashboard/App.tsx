@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatMinutes } from '../../src/format';
+import { CATEGORY_DEFINITIONS, defaultProductivityFor, PRODUCTIVITY_VALUES, type ProductivityValue, type WebsiteCategory } from '../../src/classification/categories';
 import { summarizeWebsiteTime } from '../../src/classification/productivity-summary';
-import { loadDomainOverrides, type DomainOverride } from '../../src/classification/settings-store';
+import { loadDomainOverrides, saveDomainOverride, type DomainOverride } from '../../src/classification/settings-store';
 import { buildDailyUsage, buildDashboardInsights, buildTimeline, buildWebsiteUsage, type DailyUsage, type DashboardInsights, type TimelineEntry, type WebsiteUsage } from '../../src/analytics/dashboard';
 import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
@@ -162,7 +163,10 @@ export default function App() {
           <div className="mt-5"><Panel title="Daily browsing goal" subtitle={`${data.wellbeing.dailyGoalMinutes} minutes · ${todayProgress}% complete`}><div className="h-2 overflow-hidden rounded-full bg-[#252620]"><div className="h-full rounded-full bg-[#a9da7b]" style={{ width: `${todayProgress}%` }} /></div></Panel></div>
         </>}
         {view === 'Activity' && <div className="mt-7"><Timeline entries={data.timeline} detailed /></div>}
-        {view === 'Websites' && <div className="mt-7"><WebsiteTable websites={data.websites} detailed /></div>}
+        {view === 'Websites' && <div className="mt-7"><WebsiteTable websites={data.websites} detailed onSaveRule={async (domain, category, productivity) => {
+          await saveDomainOverride({ domain, category, productivity });
+          await refresh();
+        }} /></div>}
         {view === 'YouTube' && <div className="mt-7 grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeSummary} videos={topVideos} detailed /><Panel title="Most watched channels" subtitle="Ranked by stored playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records yet.</Empty>}</Panel></div>}
         {view === 'Focus Sessions' && <FocusSessionsView sessions={data.sessions} records={data.focusRecords} overrides={data.overrides} refresh={refresh} />}
         {view === 'Insights' && <InsightsView insights={data.insights} />}
@@ -209,9 +213,43 @@ function IntentBars({ summary }: { summary: ReturnType<typeof summarizeWebsiteTi
   return <div>{total > 0 ? <div className="mt-6 flex h-3 overflow-hidden rounded-full bg-[#252620]">{entries.map(([label, value, color]) => <div key={label} title={`${label} ${duration(value)}`} className={color} style={{ width: `${value / total * 100}%` }} />)}</div> : <Empty>No classified browsing time yet.</Empty>}<div className="mt-5 space-y-3">{entries.map(([label, value, color]) => <div key={label} className="flex items-center justify-between text-xs"><span className="flex items-center gap-2 text-[#999a91]"><i className={`size-2 rounded-full ${color}`} />{label}</span><b className="font-medium text-[#d3d1c7]">{duration(value)}</b></div>)}<div className="flex justify-between border-t border-white/[.06] pt-3 text-[10px] text-[#777870]"><span>Unknown</span><span>{duration(summary.unknownMs)}</span></div></div></div>;
 }
 
-function WebsiteTable({ websites, detailed = false }: { websites: WebsiteUsage[]; detailed?: boolean }) {
-  return <Panel title={detailed ? 'All websites' : 'Top websites'} subtitle="Ranked by active time on this device">{websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site, index) => <div key={site.domain} className="flex items-center gap-3 py-3"><span className="w-5 text-[10px] text-[#686960]">{index + 1}</span><div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">{site.domain}</p><p className="mt-1 text-[10px] text-[#777870]">{site.category} · {site.productivity}</p></div><span className="text-xs tabular-nums text-[#aaa99f]">{duration(site.durationMs)}</span></div>)}</div> : <Empty>No website activity recorded yet.</Empty>}</Panel>;
+function WebsiteTable({ websites, detailed = false, onSaveRule }: { websites: WebsiteUsage[]; detailed?: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void> }) {
+  return <Panel title={detailed ? 'Websites and categories' : 'Top websites'} subtitle={detailed ? 'Change a category or browsing intent to fit how you use a site.' : 'Ranked by active time on this device'}>{websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site, index) => <WebsiteRow key={site.domain} site={site} index={index} editable={detailed} onSaveRule={onSaveRule} />)}</div> : <Empty>No website activity recorded yet. Sites you visit will appear here.</Empty>}</Panel>;
 }
+
+function WebsiteRow({ site, index, editable, onSaveRule }: { site: WebsiteUsage; index: number; editable: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void> }) {
+  const [category, setCategory] = useState<WebsiteCategory>(site.category);
+  const [productivity, setProductivity] = useState<ProductivityValue>(site.productivity);
+  const [message, setMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setCategory(site.category); setProductivity(site.productivity); }, [site.category, site.productivity]);
+  const save = async () => {
+    if (!onSaveRule) return;
+    setSaving(true);
+    try { await onSaveRule(site.domain, category, productivity); setMessage('Saved'); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save this category.'); }
+    finally { setSaving(false); }
+  };
+  return <div className="flex items-start gap-3 py-3">
+    <span className="w-5 pt-1 text-[10px] text-[#686960]">{index + 1}</span>
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center justify-between gap-3"><p className="truncate text-xs font-medium">{site.domain}</p><span className="shrink-0 text-xs tabular-nums text-[#aaa99f]">{duration(site.durationMs)}</span></div>
+      {!editable ? <p className="mt-1 text-[10px] text-[#777870]">{site.category} · {site.productivity}</p> : <>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <select aria-label={`Category for ${site.domain}`} value={category} onChange={(event) => { const next = event.target.value as WebsiteCategory; setCategory(next); setProductivity(next === 'Unknown' ? 'unknown' : defaultProductivityFor(next)); }} className="w-full rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-[10px] text-[#d8d6cc]">
+            {CATEGORY_DEFINITIONS.map(({ name }) => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <select aria-label={`Browsing intent for ${site.domain}`} value={productivity} onChange={(event) => setProductivity(event.target.value as ProductivityValue)} disabled={category === 'Unknown'} className="w-full rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-[10px] text-[#d8d6cc] disabled:opacity-50">
+            {PRODUCTIVITY_VALUES.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}
+          </select>
+        </div>
+        <div className="mt-2 flex items-center justify-between"><span role="status" className="text-[10px] text-[#b3d783]">{message}</span><button type="button" onClick={() => void save()} disabled={saving || (category === site.category && productivity === site.productivity)} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#d8d6cc] disabled:opacity-40">{saving ? 'Saving…' : 'Save category'}</button></div>
+      </>}
+    </div>
+  </div>;
+}
+
+function titleCase(value: string): string { return value.charAt(0).toUpperCase() + value.slice(1); }
 
 function Timeline({ entries, detailed = false }: { entries: TimelineEntry[]; detailed?: boolean }) {
   return <Panel title={detailed ? 'Activity timeline' : 'Recent activity'} subtitle="Individual stored foreground intervals">{entries.length ? <div className="divide-y divide-white/[.06]">{entries.map((entry, index) => <div key={`${entry.startedAt}-${index}`} className="flex items-center gap-3 py-3"><span className="w-16 text-[10px] tabular-nums text-[#777870]">{new Date(entry.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span><span className="size-2 rounded-full bg-[#a9da7b]" /><p className="min-w-0 flex-1 truncate text-xs">{entry.domain}</p><span className="text-xs tabular-nums text-[#aaa99f]">{duration(entry.durationMs)}</span></div>)}</div> : <Empty>No activity recorded yet. New intervals will appear here.</Empty>}</Panel>;

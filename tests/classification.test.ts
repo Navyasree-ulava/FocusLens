@@ -14,6 +14,9 @@ describe('website classification', () => {
     expect(classifyDomain('linkedin.com')).toMatchObject({ category: 'Social Media', productivity: 'neutral', source: 'default' });
     expect(classifyDomain('youtube.com')).toMatchObject({ category: 'Entertainment', productivity: 'neutral', source: 'default' });
     expect(classifyDomain('khanacademy.org')).toMatchObject({ category: 'Learning', productivity: 'productive', source: 'default' });
+    expect(classifyDomain('classroom.google.com')).toMatchObject({ category: 'Academic', productivity: 'productive', source: 'default' });
+    expect(classifyDomain('docs.google.com')).toMatchObject({ category: 'Professional Work', productivity: 'neutral', source: 'default' });
+    expect(classifyDomain('physicswallah.live')).toMatchObject({ category: 'Learning', productivity: 'productive', source: 'default' });
     expect(classifyDomain('shop.example')).toMatchObject({ category: 'Unknown', productivity: 'unknown', source: 'unknown' });
   });
 

@@ -4,6 +4,7 @@ import { classifyYouTubeVideo } from '../youtube/classify-video';
 import type { AIClassification } from '../ai/types';
 import type { DomainOverride } from '../classification/settings-store';
 import type { ActivityRecord } from '../tracking/types';
+import type { ProductivityValue, WebsiteCategory } from '../classification/categories';
 import { localDayBounds } from '../tracking/time';
 
 export interface DailyUsage {
@@ -15,8 +16,8 @@ export interface DailyUsage {
 export interface WebsiteUsage {
   domain: string;
   durationMs: number;
-  category: string;
-  productivity: string;
+  category: WebsiteCategory;
+  productivity: ProductivityValue;
 }
 
 export interface TimelineEntry {

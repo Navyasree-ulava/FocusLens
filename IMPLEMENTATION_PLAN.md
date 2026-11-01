@@ -13,6 +13,7 @@ Implement phases sequentially. Automated build, lint, typecheck, and phase tests
 | 6 — AI (optional) | Provider abstraction, opt-in ambiguous classification, structured confidence and feedback | Disabled by default; explicit provider permission; structured response and failure cases tested | Automated checks complete; provider opt-in smoke check pending |
 | 7 — Insights | Best classified productive hour, largest recreational source, weekly comparison, YouTube learning-goal time | Calculations use stored intervals, user classifications, local calendar weeks, and playback time; empty states are honest | Implemented; browser dashboard check pending |
 | 8 — Popup simplification | Focus the popup on today's total and website-category breakdown | Compact view hides advanced controls; daily data is clipped to today and overlapping intervals count once | Implemented; browser popup check pending |
+| 9 — Category coverage and editing | Add common classroom, education, productivity, and communication defaults; let users edit visited domains in the dashboard | Classroom sites receive sensible defaults; unknown sites can be reclassified and persist across views | Implemented; browser rule-edit check pending |
 
 ## Phase 0 decisions
 

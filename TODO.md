@@ -43,3 +43,6 @@
 - [x] Phase 8: Simplify the popup to today's active browsing total and website-category breakdown, with a single dashboard link.
 - [x] Clip activity to the current day, prevent overlapping or invalid intervals from inflating the displayed daily total, and cover this with a regression test.
 - [ ] Reload the popup and confirm today's total and category breakdown stay within the elapsed day and update while browsing.
+- [x] Phase 9: Expand defaults for classroom, education, Google/Microsoft work tools, and common communication platforms.
+- [x] Restore per-website category and intent editing in the dashboard Websites view so unknown domains can be corrected without making the popup complex.
+- [ ] Change an unknown website to a category in the dashboard, reload, and confirm the saved rule changes daily category totals.
