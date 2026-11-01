@@ -18,6 +18,7 @@ export default defineContentScript({
     let activeInBrowser = false;
     let currentVideo: HTMLVideoElement | null = null;
     let refreshTimer: number | undefined;
+    let heartbeatTimer: number | undefined;
     let lastPublishedPageState = '';
 
     const send = (message: unknown) => {
@@ -30,14 +31,20 @@ export default defineContentScript({
 
     const currentLocation = () => new URL(window.location.href);
 
-    const publishPageState = () => {
+    const publishPageState = (force = false) => {
       const video = findCurrentVideo();
+      const now = Date.now();
       const pageState = readPageState(currentLocation(), document, video);
-      tracker.updatePageState(pageState, Date.now());
+      tracker.updatePageState(pageState, now);
       const serialized = JSON.stringify(pageState);
-      if (serialized !== lastPublishedPageState) {
+      if (force || serialized !== lastPublishedPageState) {
         lastPublishedPageState = serialized;
-        send({ type: PAGE_STATE_MESSAGE, pageState });
+        send({
+          type: PAGE_STATE_MESSAGE,
+          pageState,
+          active: activeInBrowser && document.visibilityState === 'visible',
+          segmentStartedAt: tracker.getCurrentSegmentStartedAt(),
+        });
       }
     };
 
@@ -72,7 +79,7 @@ export default defineContentScript({
         const observedAt = parsed.data.observedAt;
         activeInBrowser = parsed.data.active;
         tracker.setContextActive(activeInBrowser && document.visibilityState === 'visible', observedAt);
-        publishPageState();
+        publishPageState(true);
       } catch {
         activeInBrowser = false;
       }
@@ -85,13 +92,15 @@ export default defineContentScript({
       const active = activeInBrowser && document.visibilityState === 'visible';
       tracker.setContextActive(active, parsed.data.observedAt);
       if (parsed.data.checkpoint) tracker.checkpoint(parsed.data.observedAt);
-      publishPageState();
+      publishPageState(true);
       return false;
     });
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
+        activeInBrowser = false;
         tracker.setContextActive(false, Date.now());
+        publishPageState(true);
       } else {
         void requestCurrentContext();
       }
@@ -101,13 +110,19 @@ export default defineContentScript({
     window.addEventListener('popstate', scheduleRefresh);
     window.addEventListener('pagehide', () => {
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      if (heartbeatTimer !== undefined) window.clearInterval(heartbeatTimer);
+      activeInBrowser = false;
       tracker.end(Date.now());
+      publishPageState(true);
       detachVideo();
     }, { once: true });
 
     const observer = new MutationObserver(scheduleRefresh);
     if (document.documentElement) observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
     publishPageState();
+    heartbeatTimer = window.setInterval(() => {
+      if (activeInBrowser && document.visibilityState === 'visible') publishPageState(true);
+    }, 5_000);
     void requestCurrentContext();
   },
 });

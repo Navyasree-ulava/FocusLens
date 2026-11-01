@@ -31,6 +31,14 @@ export default defineBackground(() => {
   const popupPorts = new Set<Browser.runtime.Port>();
   let workQueue = Promise.resolve();
 
+  const notifyAnalyticsUpdated = () => {
+    void browser.runtime.sendMessage({ type: 'focuslens-analytics-updated' }).catch(() => undefined);
+    for (const port of popupPorts) {
+      try { port.postMessage({ type: 'focuslens-youtube-updated' }); }
+      catch { popupPorts.delete(port); }
+    }
+  };
+
   const enqueue = (work: () => Promise<void>) => {
     workQueue = workQueue.then(work).catch((error: unknown) => {
       console.error('[FocusLens] Activity update failed.', error);
@@ -243,7 +251,7 @@ export default defineBackground(() => {
           try {
             await store.appendYouTubeSegment(segment);
             sendResponse({ ok: true });
-            for (const popupPort of popupPorts) popupPort.postMessage({ type: 'focuslens-youtube-updated' });
+            notifyAnalyticsUpdated();
           } catch (error) {
             sendResponse({ ok: false });
             throw error;
@@ -253,22 +261,28 @@ export default defineBackground(() => {
         }
       case 'focuslens-youtube-page-state':
         {
-          const pageState = parsed.data.pageState;
+        const pageState = parsed.data.pageState;
+        const requestedActive = parsed.data.active;
+        const requestedSegmentStart = parsed.data.segmentStartedAt;
         void store.readState().then(async (state) => {
-          const active = Boolean(
+          const active = requestedActive && Boolean(
             state && state.intervalStartedAt !== null && state.focused && !state.idle &&
             state.context?.tabId === tabId && state.context?.domain === 'www.youtube.com',
           );
+          const now = Date.now();
           await browser.storage.session.set({
             [YOUTUBE_CURRENT_STATE_KEY]: {
               tabId,
               active,
               pageState,
-              updatedAt: Date.now(),
+              segmentStartedAt: active && requestedSegmentStart !== null && requestedSegmentStart <= now
+                ? requestedSegmentStart
+                : null,
+              updatedAt: now,
             },
           });
           sendResponse({ ok: true });
-          for (const popupPort of popupPorts) popupPort.postMessage({ type: 'focuslens-youtube-updated' });
+          notifyAnalyticsUpdated();
         }).catch(() => sendResponse({ ok: false }));
         return true;
         }

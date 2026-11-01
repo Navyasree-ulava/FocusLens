@@ -1,5 +1,5 @@
 import { classifyYouTubeVideo } from './classify-video';
-import type { YouTubeCategory, YouTubeSegment, YouTubeSettings } from './types';
+import type { YouTubeCategory, YouTubeCurrentState, YouTubeSegment, YouTubeSettings } from './types';
 import type { AIClassification } from '../ai/types';
 
 export interface YouTubeSummary {
@@ -25,6 +25,46 @@ export interface WatchedVideo {
 export interface WatchedChannel {
   channelName: string;
   durationMs: number;
+}
+
+/** Clips reports to their selected calendar window and removes any overlapping segment time. */
+export function clipYouTubeSegments(
+  records: readonly YouTubeSegment[],
+  start: number,
+  end: number,
+  current: YouTubeCurrentState | null = null,
+): YouTubeSegment[] {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+  const candidates = records.flatMap((record) => {
+    if (!Number.isFinite(record.startedAt) || !Number.isFinite(record.endedAt) ||
+      !Number.isFinite(record.durationMs) || record.durationMs <= 0 ||
+      record.endedAt <= record.startedAt || record.durationMs !== record.endedAt - record.startedAt) return [];
+    const startedAt = Math.max(start, record.startedAt);
+    const endedAt = Math.min(end, record.endedAt);
+    return endedAt > startedAt ? [{ ...record, startedAt, endedAt, durationMs: endedAt - startedAt }] : [];
+  });
+
+  if (current?.active && current.segmentStartedAt !== null && current.segmentStartedAt <= end && end > start) {
+    const startedAt = Math.max(start, current.segmentStartedAt);
+    if (end > startedAt) candidates.push({
+      id: `live-${current.tabId}-${current.segmentStartedAt}`,
+      ...current.pageState,
+      startedAt,
+      endedAt: end,
+      durationMs: end - startedAt,
+    });
+  }
+
+  candidates.sort((left, right) => left.startedAt - right.startedAt || left.endedAt - right.endedAt);
+  const unique: YouTubeSegment[] = [];
+  let countedUntil = start;
+  for (const segment of candidates) {
+    const startedAt = Math.max(segment.startedAt, countedUntil);
+    if (segment.endedAt <= startedAt) continue;
+    unique.push({ ...segment, startedAt, durationMs: segment.endedAt - startedAt });
+    countedUntil = segment.endedAt;
+  }
+  return unique;
 }
 
 const EDUCATIONAL_CATEGORIES = new Set<YouTubeCategory>([

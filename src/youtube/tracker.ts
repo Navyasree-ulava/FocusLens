@@ -63,6 +63,10 @@ export class YouTubeSegmentTracker {
     this.lastCheckpointAt = null;
   }
 
+  getCurrentSegmentStartedAt(): number | null {
+    return this.active ? this.segmentStartedAt : null;
+  }
+
   private handleLongGap(now: number): void {
     if (this.segmentStartedAt === null || this.lastCheckpointAt === null) return;
     if (now - this.lastCheckpointAt <= this.maxUnobservedGapMs) return;

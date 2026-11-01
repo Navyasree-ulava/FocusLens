@@ -8,8 +8,9 @@ import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
 import type { ActivityRecord, TrackerState } from '../../src/tracking/types';
 import { loadYouTubeSettings } from '../../src/youtube/settings-store';
-import { mostWatchedChannels, mostWatchedVideos, summarizeYouTubeTime, type YouTubeSummary } from '../../src/youtube/summary';
-import type { YouTubeSegment } from '../../src/youtube/types';
+import { clipYouTubeSegments, mostWatchedChannels, mostWatchedVideos, summarizeYouTubeTime, type YouTubeSummary } from '../../src/youtube/summary';
+import type { YouTubeCurrentState, YouTubeSegment } from '../../src/youtube/types';
+import { youtubeCurrentStateSchema } from '../../src/youtube/validation';
 import { endFocusSession, focusSessionElapsedMs, pauseFocusSession, resumeFocusSession, startFocusSession, summarizeFocusSession } from '../../src/wellbeing/focus-sessions';
 import { DEFAULT_WELLBEING_SETTINGS, loadWellbeingSettings, saveWellbeingSettings } from '../../src/wellbeing/settings-store';
 import type { FocusSession, WellbeingSettings } from '../../src/wellbeing/types';
@@ -23,6 +24,9 @@ interface DashboardData {
   records: ActivityRecord[];
   focusRecords: ActivityRecord[];
   youtubeRecords: YouTubeSegment[];
+  youtubeToday: YouTubeSegment[];
+  youtubeWeek: YouTubeSegment[];
+  youtubeCurrentState: YouTubeCurrentState | null;
   aiClassifications: AIClassification[];
   overrides: DomainOverride[];
   tracker: TrackerState | null;
@@ -31,6 +35,7 @@ interface DashboardData {
   timeline: TimelineEntry[];
   websites: WebsiteUsage[];
   youtubeSummary: YouTubeSummary;
+  youtubeTodaySummary: YouTubeSummary;
   insights: DashboardInsights;
   sessions: FocusSession[];
   wellbeing: WellbeingSettings;
@@ -43,8 +48,9 @@ const FOCUS_SESSION_END_ALARM = 'focuslens-focus-session-end';
 const emptyYouTube = summarizeYouTubeTime([]);
 const emptyInsights: DashboardInsights = { productiveHour: null, biggestDistraction: null, weeklyChangeMs: 0, thisWeekMs: 0, previousWeekMs: 0, learningGoals: [] };
 const emptyData: DashboardData = {
-  records: [], focusRecords: [], youtubeRecords: [], aiClassifications: [], overrides: [], tracker: null, todayMs: 0,
-  daily: [], timeline: [], websites: [], youtubeSummary: emptyYouTube, insights: emptyInsights, sessions: [], wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
+  records: [], focusRecords: [], youtubeRecords: [], youtubeToday: [], youtubeWeek: [], youtubeCurrentState: null,
+  aiClassifications: [], overrides: [], tracker: null, todayMs: 0,
+  daily: [], timeline: [], websites: [], youtubeSummary: emptyYouTube, youtubeTodaySummary: emptyYouTube, insights: emptyInsights, sessions: [], wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
 };
 
 function duration(ms: number): string {
@@ -69,12 +75,23 @@ export default function App() {
       try {
         const now = Date.now();
         const { start, end } = dateWindow(now, 14);
-        const [state, overrides, settings, records, youtubeRecords, sessions, wellbeing, aiClassifications] = await Promise.all([
+        const [state, overrides, settings, records, youtubeRecords, sessions, wellbeing, aiClassifications, youtubeSession] = await Promise.all([
           store.readState(), loadDomainOverrides(), loadYouTubeSettings(),
           store.listRecords(start, end), store.listYouTubeSegments(start, now + 1), store.listFocusSessions(), loadWellbeingSettings(),
-          store.listAIClassifications(),
+          store.listAIClassifications(), browser.storage.session.get('focuslens-youtube-current-state'),
         ]);
         const todayBounds = localDayBounds(now);
+        const parsedYouTubeState = youtubeCurrentStateSchema.safeParse(youtubeSession['focuslens-youtube-current-state']);
+        const persistedYouTubeState = parsedYouTubeState.success ? parsedYouTubeState.data : null;
+        const liveYouTubeState = persistedYouTubeState && now - persistedYouTubeState.updatedAt <= 20_000
+          ? persistedYouTubeState
+          : null;
+        const visibleYouTubeState = persistedYouTubeState && liveYouTubeState === null
+          ? { ...persistedYouTubeState, active: false, segmentStartedAt: null }
+          : persistedYouTubeState;
+        const youtubeWeekStart = dateWindow(now, 7).start;
+        const youtubeToday = clipYouTubeSegments(youtubeRecords, todayBounds.start, now, liveYouTubeState);
+        const youtubeWeek = clipYouTubeSegments(youtubeRecords, youtubeWeekStart, now, liveYouTubeState);
         const oldestSessionStart = sessions.reduce((oldest, session) => Math.min(oldest, session.startedAt), start);
         const focusRecords = oldestSessionStart < start ? await store.listRecords(oldestSessionStart, end) : records;
         const currentOpenMs = state?.intervalStartedAt !== null && state?.context
@@ -91,6 +108,9 @@ export default function App() {
           records: withOpen,
           focusRecords: focusRecords === records ? withOpen : [...focusRecords, ...withOpen.filter((record) => record.id === 'current-open')],
           youtubeRecords,
+          youtubeToday,
+          youtubeWeek,
+          youtubeCurrentState: visibleYouTubeState,
           aiClassifications,
           overrides,
           tracker: state,
@@ -98,7 +118,8 @@ export default function App() {
           daily,
           timeline: buildTimeline(withOpen.filter((record) => record.endedAt > todayBounds.start)),
           websites: buildWebsiteUsage(withOpen.filter((record) => record.endedAt > dateWindow(now, 7).start), overrides),
-          youtubeSummary: summarizeYouTubeTime(youtubeRecords, settings, aiClassifications),
+          youtubeSummary: summarizeYouTubeTime(youtubeWeek, settings, aiClassifications),
+          youtubeTodaySummary: summarizeYouTubeTime(youtubeToday, settings, aiClassifications),
           insights: buildDashboardInsights(withOpen, youtubeRecords, now, overrides, settings, aiClassifications),
           sessions,
           wellbeing,
@@ -110,8 +131,12 @@ export default function App() {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 15_000);
-    return () => { mounted = false; window.clearInterval(timer); };
+    const onAnalyticsUpdate = (message: unknown) => {
+      if (message && typeof message === 'object' && 'type' in message && message.type === 'focuslens-analytics-updated') void refresh();
+    };
+    browser.runtime.onMessage.addListener(onAnalyticsUpdate);
+    const timer = window.setInterval(() => void refresh(), 5_000);
+    return () => { mounted = false; window.clearInterval(timer); browser.runtime.onMessage.removeListener(onAnalyticsUpdate); };
   }, [refreshNonce]);
 
   const todayStart = localDayBounds(Date.now()).start;
@@ -123,8 +148,9 @@ export default function App() {
       })), data.overrides,
   ), [data.records, data.overrides, todayStart]);
   const maxDaily = Math.max(1, ...data.daily.map((day) => day.durationMs));
-  const topVideos = mostWatchedVideos(data.youtubeRecords, 5);
-  const topChannels = mostWatchedChannels(data.youtubeRecords, 5);
+  const topVideos = mostWatchedVideos(data.youtubeWeek, 5);
+  const topTodayVideos = mostWatchedVideos(data.youtubeToday, 5);
+  const topChannels = mostWatchedChannels(data.youtubeToday, 5);
   const status = data.tracker?.intervalStartedAt !== null && data.tracker?.intervalStartedAt !== undefined
     ? 'Tracking now'
     : data.tracker?.idle ? 'Paused while idle' : data.tracker?.focused === false ? 'Browser not focused' : 'Waiting for activity';
@@ -177,7 +203,7 @@ export default function App() {
           await saveDomainOverride({ domain, category, productivity });
           await refresh();
         }} onClassifyUnknown={classifyWebsiteWithAI} onUseSuggestion={saveWebsiteAIClassification} /></div>}
-        {view === 'YouTube' && <div className="mt-7 grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeSummary} videos={topVideos} detailed /><Panel title="Most watched channels" subtitle="Ranked by stored playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records yet.</Empty>}</Panel></div>}
+        {view === 'YouTube' && <div className="mt-7 space-y-5"><YouTubeNowPanel current={data.youtubeCurrentState} /><div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeTodaySummary} videos={topTodayVideos} detailed /><Panel title="Most watched channels" subtitle="Ranked by today's playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records today.</Empty>}</Panel></div></div>}
         {view === 'Focus Sessions' && <FocusSessionsView sessions={data.sessions} records={data.focusRecords} overrides={data.overrides} refresh={refresh} />}
         {view === 'Insights' && <InsightsView insights={data.insights} />}
         {view === 'Settings' && <SettingsView settings={data.wellbeing} refresh={refresh} />}
@@ -289,11 +315,20 @@ function Timeline({ entries, detailed = false }: { entries: TimelineEntry[]; det
   return <Panel title={detailed ? 'Activity timeline' : 'Recent activity'} subtitle="Individual stored foreground intervals">{entries.length ? <div className="divide-y divide-white/[.06]">{entries.map((entry, index) => <div key={`${entry.startedAt}-${index}`} className="flex items-center gap-3 py-3"><span className="w-16 text-[10px] tabular-nums text-[#777870]">{new Date(entry.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span><span className="size-2 rounded-full bg-[#a9da7b]" /><p className="min-w-0 flex-1 truncate text-xs">{entry.domain}</p><span className="text-xs tabular-nums text-[#aaa99f]">{duration(entry.durationMs)}</span></div>)}</div> : <Empty>No activity recorded yet. New intervals will appear here.</Empty>}</Panel>;
 }
 
+function YouTubeNowPanel({ current }: { current: YouTubeCurrentState | null }) {
+  const live = current?.active && current.segmentStartedAt !== null;
+  const metadata = current?.pageState.metadata;
+  return <Panel title="Now on YouTube" subtitle={live ? 'Live foreground playback' : 'Live playback appears while YouTube is the active browser tab'}>
+    {live ? <div className="flex items-center justify-between gap-4"><div className="min-w-0"><p className="truncate text-sm font-medium">{metadata?.title ?? 'YouTube video'}</p><p className="mt-1 truncate text-xs text-[#85867d]">{metadata?.channelName ?? 'Unknown channel'} · {current.pageState.playbackState}</p></div><span className="shrink-0 rounded-full bg-[#c9ee8e]/10 px-3 py-1 text-xs text-[#c9ee8e]">{duration(Math.max(0, Date.now() - current.segmentStartedAt!))}</span></div>
+      : <p className="text-xs text-[#85867d]">Switch to YouTube to see the current video and its live playing time. Daily totals below include saved foreground activity and the current session when available.</p>}
+  </Panel>;
+}
+
 function YouTubeCard({ summary, videos, detailed = false }: { summary: YouTubeSummary; videos: ReturnType<typeof mostWatchedVideos>; detailed?: boolean }) {
   const categories = [
     ['Educational', summary.educationalViewingMs], ['Entertainment', summary.entertainmentViewingMs], ['Shorts', summary.shortsMs],
   ] as const;
-  return <Panel title={detailed ? 'YouTube viewing' : 'YouTube this week'} subtitle="Video playback state is kept locally"><div className="grid grid-cols-2 gap-3">{categories.map(([label, value]) => <div key={label} className="rounded-xl bg-[#20211d] p-3"><p className="text-[10px] text-[#85867d]">{label}</p><p className="mt-2 text-lg font-medium tabular-nums">{duration(value)}</p></div>)}</div><div className="mt-4 grid grid-cols-3 gap-2 text-[10px] text-[#85867d]">{[['Paused', summary.pausedMs], ['Buffering', summary.bufferingMs], ['Browsing', summary.browsingMs]].map(([label, value]) => <div key={label as string}>{label}<b className="mt-1 block font-medium text-[#c9c7bc]">{duration(value as number)}</b></div>)}</div><div className="mt-5 border-t border-white/[.06] pt-4"><p className="mb-2 text-[10px] text-[#85867d]">Most watched videos</p>{videos.length ? videos.map((video) => <a key={video.videoId} href={video.videoUrl} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 border-t border-white/[.04] py-2.5 text-xs hover:text-[#c9ee8e]"><span className="min-w-0 truncate">{video.title ?? video.videoId}<span className="mt-1 block truncate text-[10px] text-[#777870]">{video.channelName ?? 'Unknown channel'}</span></span><span className="shrink-0 text-[10px] text-[#aaa99f]">{duration(video.durationMs)}</span></a>) : <Empty>No YouTube viewing records yet.</Empty>}</div></Panel>;
+  return <Panel title={detailed ? 'YouTube today' : 'YouTube this week'} subtitle="Foreground activity on this device"><div className="grid grid-cols-2 gap-3">{categories.map(([label, value]) => <div key={label} className="rounded-xl bg-[#20211d] p-3"><p className="text-[10px] text-[#85867d]">{label}</p><p className="mt-2 text-lg font-medium tabular-nums">{duration(value)}</p></div>)}</div><div className="mt-4 grid grid-cols-3 gap-2 text-[10px] text-[#85867d]">{[['Paused', summary.pausedMs], ['Buffering', summary.bufferingMs], ['Browsing', summary.browsingMs]].map(([label, value]) => <div key={label as string}>{label}<b className="mt-1 block font-medium text-[#c9c7bc]">{duration(value as number)}</b></div>)}</div><div className="mt-5 border-t border-white/[.06] pt-4"><p className="mb-2 text-[10px] text-[#85867d]">Most watched videos</p>{videos.length ? videos.map((video) => <a key={video.videoId} href={video.videoUrl} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 border-t border-white/[.04] py-2.5 text-xs hover:text-[#c9ee8e]"><span className="min-w-0 truncate">{video.title ?? video.videoId}<span className="mt-1 block truncate text-[10px] text-[#777870]">{video.channelName ?? 'Unknown channel'}</span></span><span className="shrink-0 text-[10px] text-[#aaa99f]">{duration(video.durationMs)}</span></a>) : <Empty>No YouTube viewing records yet.</Empty>}</div></Panel>;
 }
 
 function Empty({ children }: { children: React.ReactNode }) {

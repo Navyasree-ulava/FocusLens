@@ -49,3 +49,7 @@
 - [x] Phase 10: Add Gemini, Grok, and OpenAI provider choices for opt-in AI website suggestions.
 - [x] Send only the selected unknown hostname, validate the structured response, and require the user to accept the suggestion before storing a website rule.
 - [ ] Configure a Gemini or Grok API key in Dashboard → Settings and classify one selected Unknown domain; verify the request succeeds and the accepted category persists.
+
+- [x] Phase 11: Fix YouTube analytics windows, overlap inflation, and delayed dashboard refreshes; project only the fresh active segment and show the current video state.
+- [x] Add regression tests for local-day clipping, overlapping segments, and live-segment projection.
+- [ ] Reload the extension, watch and pause YouTube, and verify the live card and today's category totals update and stop when YouTube is no longer active.

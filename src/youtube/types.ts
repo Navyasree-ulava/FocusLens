@@ -28,6 +28,14 @@ export interface YouTubePageState {
   playbackState: YouTubePlaybackState;
 }
 
+export interface YouTubeCurrentState {
+  tabId: number;
+  active: boolean;
+  pageState: YouTubePageState;
+  segmentStartedAt: number | null;
+  updatedAt: number;
+}
+
 export interface YouTubeSegment extends YouTubePageState {
   id: string;
   startedAt: number;

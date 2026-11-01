@@ -53,12 +53,18 @@ export const youtubeContextResponseSchema = z.object({
 export const youtubeContentMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('focuslens-youtube-context-request') }).strict(),
   z.object({ type: z.literal('focuslens-youtube-segment'), segment: youtubeSegmentSchema }).strict(),
-  z.object({ type: z.literal('focuslens-youtube-page-state'), pageState: youtubePageStateSchema }).strict(),
+  z.object({
+    type: z.literal('focuslens-youtube-page-state'),
+    pageState: youtubePageStateSchema,
+    active: z.boolean(),
+    segmentStartedAt: z.number().int().nonnegative().nullable(),
+  }).strict(),
 ]);
 
 export const youtubeCurrentStateSchema = z.object({
   tabId: z.number().int().nonnegative(),
   active: z.boolean(),
   pageState: youtubePageStateSchema,
+  segmentStartedAt: z.number().int().nonnegative().nullable(),
   updatedAt: z.number().int().nonnegative(),
 }).strict();

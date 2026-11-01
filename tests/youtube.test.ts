@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { IndexedDbActivityStore } from '../src/tracking/indexeddb-store';
 import { classifyYouTubeVideo } from '../src/youtube/classify-video';
-import { mostWatchedChannels, mostWatchedVideos, summarizeYouTubeTime } from '../src/youtube/summary';
+import { clipYouTubeSegments, mostWatchedChannels, mostWatchedVideos, summarizeYouTubeTime } from '../src/youtube/summary';
 import { deleteLearningGoal, deleteYouTubeOverride, loadYouTubeSettings, parseYouTubeSettings, saveLearningGoal, saveYouTubeOverride, YOUTUBE_SETTINGS_STORAGE_KEY } from '../src/youtube/settings-store';
 import { youtubeSegmentSchema } from '../src/youtube/validation';
 import { readPlaybackState, readYouTubeMetadata } from '../src/youtube/metadata';
@@ -140,6 +140,31 @@ describe('YouTube segment tracker', () => {
 });
 
 describe('YouTube settings and reports', () => {
+  it('clips YouTube records to the selected day and counts overlaps once', () => {
+    const records = [
+      segment({ startedAt: 0, endedAt: 20_000, durationMs: 20_000 }),
+      segment({ startedAt: 10_000, endedAt: 30_000, durationMs: 20_000 }),
+      segment({ startedAt: 30_000, endedAt: 40_000, durationMs: 10_000 }),
+    ];
+    const clipped = clipYouTubeSegments(records, 15_000, 35_000);
+    expect(clipped.map(({ startedAt, endedAt, durationMs }) => [startedAt, endedAt, durationMs])).toEqual([
+      [15_000, 20_000, 5_000], [20_000, 30_000, 10_000], [30_000, 35_000, 5_000],
+    ]);
+    expect(clipped.reduce((total, item) => total + item.durationMs, 0)).toBe(20_000);
+  });
+
+  it('projects only an active current video into today’s total', () => {
+    const current = {
+      tabId: 7,
+      active: true,
+      pageState: pageState(),
+      segmentStartedAt: 12_000,
+      updatedAt: 19_000,
+    };
+    expect(clipYouTubeSegments([], 10_000, 20_000, current).map(({ startedAt, endedAt }) => [startedAt, endedAt])).toEqual([[12_000, 20_000]]);
+    expect(clipYouTubeSegments([], 10_000, 20_000, { ...current, active: false })).toEqual([]);
+  });
+
   it('saves learning goals and explicit channel/video overrides locally', async () => {
     await saveLearningGoal('React');
     await saveLearningGoal('react');
