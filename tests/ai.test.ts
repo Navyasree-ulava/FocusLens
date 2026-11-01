@@ -4,6 +4,7 @@ import { IndexedDbActivityStore } from '../src/tracking/indexeddb-store';
 import { AI_API_KEY_SESSION_KEY, AI_SETTINGS_KEY, aiEndpointOrigin, aiHostPermissionPattern, endpointForProvider, loadAIAPIKey, loadAISettings, parseAISettings, saveAIAPIKey, saveAISettings } from '../src/ai/settings';
 import { OpenAIResponsesProvider } from '../src/ai/responses-provider';
 import { AIWebsiteClassifier } from '../src/ai/website-provider';
+import { AIYouTubeClassifier } from '../src/ai/youtube-provider';
 
 beforeEach(async () => {
   await browser.storage.local.clear();
@@ -69,6 +70,25 @@ describe('AI website classification', () => {
       output_text: JSON.stringify({ category: 'Not a category', confidence: 0.8, reason: 'Invalid test result.' }),
     }), { status: 200 }));
     await expect(classifier.classify('unknown.example')).rejects.toThrow('invalid website category');
+  });
+});
+
+describe('AI YouTube classification', () => {
+  it('uses the selected free provider with only video metadata and validates its category', async () => {
+    let requestBody = '';
+    const classifier = new AIYouTubeClassifier({ enabled: true, provider: 'gemini', endpoint: endpointForProvider('gemini'), model: 'gemini-test' }, 'gemini-test-key', async (_input, init) => {
+      requestBody = String(init?.body);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ category: 'Technical Learning', confidence: 0.91, reason: 'The title is a programming lesson.' }) } }] }), { status: 200 });
+    });
+    await expect(classifier.classify({ title: 'TypeScript tutorial', channelName: 'Code Lab', isShort: false })).resolves.toEqual({ category: 'Technical Learning', confidence: 0.91, reason: 'The title is a programming lesson.' });
+    const body = JSON.parse(requestBody) as { messages: { content: string }[] };
+    expect(body.messages[1]?.content).toContain('TypeScript tutorial');
+    expect(body.messages[1]?.content).not.toContain('https://');
+  });
+
+  it('supports Grok and rejects malformed category responses', async () => {
+    const classifier = new AIYouTubeClassifier({ enabled: true, provider: 'grok', endpoint: endpointForProvider('grok'), model: 'grok-test' }, 'grok-test-key', async () => new Response(JSON.stringify({ output_text: JSON.stringify({ category: 'Wrong', confidence: 0.8, reason: 'Invalid category.' }) }), { status: 200 }));
+    await expect(classifier.classify({ title: 'A video', channelName: null, isShort: false })).rejects.toThrow('invalid YouTube category');
   });
 });
 

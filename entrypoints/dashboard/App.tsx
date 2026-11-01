@@ -7,9 +7,12 @@ import { buildDailyUsage, buildDashboardInsights, buildTimeline, buildWebsiteUsa
 import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
 import type { ActivityRecord, TrackerState } from '../../src/tracking/types';
-import { loadYouTubeSettings } from '../../src/youtube/settings-store';
+import { loadYouTubeSettings, saveYouTubeOverride } from '../../src/youtube/settings-store';
+import { classifyYouTubeVideo } from '../../src/youtube/classify-video';
+import { YOUTUBE_CATEGORIES, type YouTubeCategory } from '../../src/youtube/types';
 import { clipYouTubeSegments, mostWatchedChannels, mostWatchedVideos, summarizeYouTubeTime, type YouTubeSummary } from '../../src/youtube/summary';
 import type { YouTubeCurrentState, YouTubeSegment } from '../../src/youtube/types';
+import type { YouTubeSettings } from '../../src/youtube/types';
 import { youtubeCurrentStateSchema } from '../../src/youtube/validation';
 import { endFocusSession, focusSessionElapsedMs, pauseFocusSession, resumeFocusSession, startFocusSession, summarizeFocusSession } from '../../src/wellbeing/focus-sessions';
 import { DEFAULT_WELLBEING_SETTINGS, loadWellbeingSettings, saveWellbeingSettings } from '../../src/wellbeing/settings-store';
@@ -18,6 +21,7 @@ import type { AIClassification } from '../../src/ai/types';
 import { AI_PROVIDER_ENDPOINTS, DEFAULT_AI_SETTINGS, aiEndpointOrigin, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, saveAIAPIKey, saveAISettings } from '../../src/ai/settings';
 import { AI_PROVIDERS, type AISettings } from '../../src/ai/types';
 import { AIWebsiteClassifier, type AIWebsiteClassification } from '../../src/ai/website-provider';
+import { AIYouTubeClassifier, type AIYouTubeSuggestion } from '../../src/ai/youtube-provider';
 
 type View = 'Overview' | 'Activity' | 'Websites' | 'YouTube' | 'Focus Sessions' | 'Insights' | 'Settings';
 interface DashboardData {
@@ -27,6 +31,7 @@ interface DashboardData {
   youtubeToday: YouTubeSegment[];
   youtubeWeek: YouTubeSegment[];
   youtubeCurrentState: YouTubeCurrentState | null;
+  youtubeSettings: YouTubeSettings;
   aiClassifications: AIClassification[];
   overrides: DomainOverride[];
   tracker: TrackerState | null;
@@ -48,7 +53,7 @@ const FOCUS_SESSION_END_ALARM = 'focuslens-focus-session-end';
 const emptyYouTube = summarizeYouTubeTime([]);
 const emptyInsights: DashboardInsights = { productiveHour: null, biggestDistraction: null, weeklyChangeMs: 0, thisWeekMs: 0, previousWeekMs: 0, learningGoals: [] };
 const emptyData: DashboardData = {
-  records: [], focusRecords: [], youtubeRecords: [], youtubeToday: [], youtubeWeek: [], youtubeCurrentState: null,
+  records: [], focusRecords: [], youtubeRecords: [], youtubeToday: [], youtubeWeek: [], youtubeCurrentState: null, youtubeSettings: { learningGoals: [], overrides: [] },
   aiClassifications: [], overrides: [], tracker: null, todayMs: 0,
   daily: [], timeline: [], websites: [], youtubeSummary: emptyYouTube, youtubeTodaySummary: emptyYouTube, insights: emptyInsights, sessions: [], wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
 };
@@ -111,6 +116,7 @@ export default function App() {
           youtubeToday,
           youtubeWeek,
           youtubeCurrentState: visibleYouTubeState,
+          youtubeSettings: settings,
           aiClassifications,
           overrides,
           tracker: state,
@@ -167,6 +173,20 @@ export default function App() {
     await saveDomainOverride({ domain, category: suggestion.category, productivity: defaultProductivityFor(suggestion.category) });
     await refresh();
   };
+  const classifyYouTubeWithAI = async (video: ReturnType<typeof mostWatchedVideos>[number]) => {
+    const [settings, apiKey] = await Promise.all([loadAISettings(), loadAIAPIKey()]);
+    if (!settings.enabled || !apiKey) throw new Error('Enable AI and add your provider key in Settings first.');
+    return new AIYouTubeClassifier(settings, apiKey).classify({ title: video.title, channelName: video.channelName, isShort: video.isShort });
+  };
+  const saveYouTubeAIClassification = async (video: ReturnType<typeof mostWatchedVideos>[number], suggestion: AIYouTubeSuggestion) => {
+    if (!video.videoId) throw new Error('This video has no ID to save a classification.');
+    await store.saveAIClassification({ videoId: video.videoId, ...suggestion, classifiedAt: Date.now() });
+    await refresh();
+  };
+  const saveYouTubeCategory = async (video: ReturnType<typeof mostWatchedVideos>[number], category: YouTubeCategory) => {
+    await saveYouTubeOverride('video', video.videoId, category);
+    await refresh();
+  };
   const todayProgress = Math.min(100, Math.round(data.todayMs / (data.wellbeing.dailyGoalMinutes * 60_000) * 100));
   return <div className="min-h-screen bg-[#111210] text-[#f2f0e9]">
     <aside className="fixed inset-y-0 left-0 hidden w-60 border-r border-white/[0.07] bg-[#151613] px-5 py-6 lg:block">
@@ -203,7 +223,7 @@ export default function App() {
           await saveDomainOverride({ domain, category, productivity });
           await refresh();
         }} onClassifyUnknown={classifyWebsiteWithAI} onUseSuggestion={saveWebsiteAIClassification} /></div>}
-        {view === 'YouTube' && <div className="mt-7 space-y-5"><YouTubeNowPanel current={data.youtubeCurrentState} /><div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeTodaySummary} videos={topTodayVideos} detailed /><Panel title="Most watched channels" subtitle="Ranked by today's playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records today.</Empty>}</Panel></div></div>}
+        {view === 'YouTube' && <div className="mt-7 space-y-5"><YouTubeNowPanel current={data.youtubeCurrentState} /><div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeTodaySummary} videos={topTodayVideos} detailed settings={data.youtubeSettings} classifications={data.aiClassifications} onClassify={classifyYouTubeWithAI} onUseSuggestion={saveYouTubeAIClassification} onSaveCategory={saveYouTubeCategory} /><Panel title="Most watched channels" subtitle="Ranked by today's playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records today.</Empty>}</Panel></div></div>}
         {view === 'Focus Sessions' && <FocusSessionsView sessions={data.sessions} records={data.focusRecords} overrides={data.overrides} refresh={refresh} />}
         {view === 'Insights' && <InsightsView insights={data.insights} />}
         {view === 'Settings' && <SettingsView settings={data.wellbeing} refresh={refresh} />}
@@ -324,11 +344,62 @@ function YouTubeNowPanel({ current }: { current: YouTubeCurrentState | null }) {
   </Panel>;
 }
 
-function YouTubeCard({ summary, videos, detailed = false }: { summary: YouTubeSummary; videos: ReturnType<typeof mostWatchedVideos>; detailed?: boolean }) {
+function YouTubeCard({ summary, videos, detailed = false, settings, classifications = [], onClassify, onUseSuggestion, onSaveCategory }: {
+  summary: YouTubeSummary;
+  videos: ReturnType<typeof mostWatchedVideos>;
+  detailed?: boolean;
+  settings?: YouTubeSettings;
+  classifications?: AIClassification[];
+  onClassify?: (video: ReturnType<typeof mostWatchedVideos>[number]) => Promise<AIYouTubeSuggestion>;
+  onUseSuggestion?: (video: ReturnType<typeof mostWatchedVideos>[number], suggestion: AIYouTubeSuggestion) => Promise<void>;
+  onSaveCategory?: (video: ReturnType<typeof mostWatchedVideos>[number], category: YouTubeCategory) => Promise<void>;
+}) {
   const categories = [
     ['Educational', summary.educationalViewingMs], ['Entertainment', summary.entertainmentViewingMs], ['Shorts', summary.shortsMs],
   ] as const;
-  return <Panel title={detailed ? 'YouTube today' : 'YouTube this week'} subtitle="Foreground activity on this device"><div className="grid grid-cols-2 gap-3">{categories.map(([label, value]) => <div key={label} className="rounded-xl bg-[#20211d] p-3"><p className="text-[10px] text-[#85867d]">{label}</p><p className="mt-2 text-lg font-medium tabular-nums">{duration(value)}</p></div>)}</div><div className="mt-4 grid grid-cols-3 gap-2 text-[10px] text-[#85867d]">{[['Paused', summary.pausedMs], ['Buffering', summary.bufferingMs], ['Browsing', summary.browsingMs]].map(([label, value]) => <div key={label as string}>{label}<b className="mt-1 block font-medium text-[#c9c7bc]">{duration(value as number)}</b></div>)}</div><div className="mt-5 border-t border-white/[.06] pt-4"><p className="mb-2 text-[10px] text-[#85867d]">Most watched videos</p>{videos.length ? videos.map((video) => <a key={video.videoId} href={video.videoUrl} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 border-t border-white/[.04] py-2.5 text-xs hover:text-[#c9ee8e]"><span className="min-w-0 truncate">{video.title ?? video.videoId}<span className="mt-1 block truncate text-[10px] text-[#777870]">{video.channelName ?? 'Unknown channel'}</span></span><span className="shrink-0 text-[10px] text-[#aaa99f]">{duration(video.durationMs)}</span></a>) : <Empty>No YouTube viewing records yet.</Empty>}</div></Panel>;
+  return <Panel title={detailed ? 'YouTube today' : 'YouTube this week'} subtitle="Foreground activity on this device"><div className="grid grid-cols-2 gap-3">{categories.map(([label, value]) => <div key={label} className="rounded-xl bg-[#20211d] p-3"><p className="text-[10px] text-[#85867d]">{label}</p><p className="mt-2 text-lg font-medium tabular-nums">{duration(value)}</p></div>)}</div><div className="mt-4 grid grid-cols-3 gap-2 text-[10px] text-[#85867d]">{[['Paused', summary.pausedMs], ['Buffering', summary.bufferingMs], ['Browsing', summary.browsingMs]].map(([label, value]) => <div key={label as string}>{label}<b className="mt-1 block font-medium text-[#c9c7bc]">{duration(value as number)}</b></div>)}</div><div className="mt-5 border-t border-white/[.06] pt-4"><p className="mb-2 text-[10px] text-[#85867d]">Most watched videos</p>{videos.length ? videos.map((video) => <YouTubeVideoRow key={video.videoId} video={video} settings={settings} aiClassification={classifications.find((item) => item.videoId === video.videoId)} onClassify={onClassify} onUseSuggestion={onUseSuggestion} onSaveCategory={onSaveCategory} />) : <Empty>No YouTube viewing records yet.</Empty>}</div></Panel>;
+}
+
+function YouTubeVideoRow({ video, settings, aiClassification, onClassify, onUseSuggestion, onSaveCategory }: {
+  video: ReturnType<typeof mostWatchedVideos>[number];
+  settings?: YouTubeSettings;
+  aiClassification?: AIClassification;
+  onClassify?: (video: ReturnType<typeof mostWatchedVideos>[number]) => Promise<AIYouTubeSuggestion>;
+  onUseSuggestion?: (video: ReturnType<typeof mostWatchedVideos>[number], suggestion: AIYouTubeSuggestion) => Promise<void>;
+  onSaveCategory?: (video: ReturnType<typeof mostWatchedVideos>[number], category: YouTubeCategory) => Promise<void>;
+}) {
+  const [suggestion, setSuggestion] = useState<AIYouTubeSuggestion | null>(null);
+  const [category, setCategory] = useState<YouTubeCategory>('Unknown');
+  const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState(false);
+  const metadata = { videoId: video.videoId, title: video.title, channelName: video.channelName, videoUrl: video.videoUrl, isShort: video.isShort };
+  const classification = classifyYouTubeVideo(metadata, settings, aiClassification);
+  useEffect(() => { setCategory(classification.category); }, [classification.category]);
+  const classify = async () => {
+    if (!onClassify) return;
+    setBusy(true);
+    try { setSuggestion(await onClassify(video)); setStatus('Suggestion ready. Review it before saving.'); }
+    catch (error) { setStatus(error instanceof Error ? error.message : 'Could not classify this video.'); }
+    finally { setBusy(false); }
+  };
+  const accept = async () => {
+    if (!suggestion || !onUseSuggestion) return;
+    setBusy(true);
+    try { await onUseSuggestion(video, suggestion); setSuggestion(null); setStatus('Saved.'); }
+    catch (error) { setStatus(error instanceof Error ? error.message : 'Could not save classification.'); }
+    finally { setBusy(false); }
+  };
+  const saveCategory = async () => {
+    if (!onSaveCategory) return;
+    setBusy(true);
+    try { await onSaveCategory(video, category); setStatus('Saved your video rule.'); }
+    catch (error) { setStatus(error instanceof Error ? error.message : 'Could not save category.'); }
+    finally { setBusy(false); }
+  };
+  return <div className="border-t border-white/[.04] py-2.5 text-xs">
+    <div className="flex items-center justify-between gap-3"><a href={video.videoUrl} target="_blank" rel="noreferrer" className="min-w-0 truncate hover:text-[#c9ee8e]">{video.title ?? video.videoId}<span className="mt-1 block truncate text-[10px] text-[#777870]">{video.channelName ?? 'Unknown channel'} · {classification.category}</span></a><span className="shrink-0 text-[10px] text-[#aaa99f]">{duration(video.durationMs)}</span></div>
+    {onSaveCategory && <div className="mt-2 flex flex-wrap items-center gap-2"><select aria-label={`Category for ${video.title ?? video.videoId}`} value={category} onChange={(event) => setCategory(event.target.value as YouTubeCategory)} className="rounded-lg border border-white/[.1] bg-[#111210] px-2 py-1.5 text-[10px]">{YOUTUBE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}</select><button type="button" onClick={() => void saveCategory()} disabled={busy || category === classification.category} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] disabled:opacity-40">Save category</button>{classification.category === 'Unknown' && onClassify && !suggestion && <button type="button" onClick={() => void classify()} disabled={busy} className="rounded-lg border border-[#c9ee8e]/20 px-2.5 py-1.5 text-[10px] text-[#c9ee8e] disabled:opacity-50">{busy ? 'Checking…' : 'Suggest with AI'}</button>}{suggestion && <div className="w-full rounded-lg border border-[#c9ee8e]/15 bg-[#c9ee8e]/[.04] p-2.5"><p className="text-[10px]">Suggestion: <b>{suggestion.category}</b> · {Math.round(suggestion.confidence * 100)}%</p><p className="mt-1 text-[10px] text-[#999a91]">{suggestion.reason}</p><button type="button" onClick={() => void accept()} disabled={busy || suggestion.confidence < 0.6} className="mt-2 rounded-lg bg-[#c9ee8e] px-2.5 py-1.5 text-[10px] font-semibold text-[#20251b] disabled:opacity-40">{busy ? 'Saving…' : suggestion.confidence < 0.6 ? 'Low confidence' : 'Use suggestion'}</button></div>}<span role="status" className="text-[10px] text-[#b3d783]">{status}</span></div>}
+  </div>;
 }
 
 function Empty({ children }: { children: React.ReactNode }) {

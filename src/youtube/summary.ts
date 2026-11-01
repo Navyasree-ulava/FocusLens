@@ -19,6 +19,7 @@ export interface WatchedVideo {
   title: string | null;
   channelName: string | null;
   videoUrl: string;
+  isShort: boolean;
   durationMs: number;
 }
 
@@ -121,7 +122,7 @@ export function mostWatchedVideos(records: readonly YouTubeSegment[], limit = 5)
     if (record.playbackState !== 'playing' || !videoId || !videoUrl || record.durationMs <= 0) continue;
     const current = totals.get(videoId);
     if (current) current.durationMs += record.durationMs;
-    else totals.set(videoId, { videoId, title, channelName, videoUrl, durationMs: record.durationMs });
+    else totals.set(videoId, { videoId, title, channelName, videoUrl, isShort: record.metadata.isShort, durationMs: record.durationMs });
   }
   return [...totals.values()].toSorted((left, right) => right.durationMs - left.durationMs).slice(0, limit);
 }

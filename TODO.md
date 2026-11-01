@@ -53,3 +53,6 @@
 - [x] Phase 11: Fix YouTube analytics windows, overlap inflation, and delayed dashboard refreshes; project only the fresh active segment and show the current video state.
 - [x] Add regression tests for local-day clipping, overlapping segments, and live-segment projection.
 - [ ] Reload the extension, watch and pause YouTube, and verify the live card and today's category totals update and stop when YouTube is no longer active.
+- [x] Phase 12: Add YouTube video category editing and optional Gemini/Grok suggestions for ambiguous videos.
+- [x] Keep video suggestions review-before-save and store accepted results locally; provider requests include only title, channel, and Shorts status.
+- [ ] Configure a Gemini or Grok key and model in Dashboard → Settings; suggest and accept a category for an Unknown video and verify the report updates.

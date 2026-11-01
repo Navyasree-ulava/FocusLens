@@ -16,6 +16,7 @@ Implement phases sequentially. Automated build, lint, typecheck, and phase tests
 | 9 — Category coverage and editing | Add common classroom, education, productivity, and communication defaults; let users edit visited domains in the dashboard | Classroom sites receive sensible defaults; unknown sites can be reclassified and persist across views | Implemented; browser rule-edit check pending |
 | 10 — Bring-your-own AI | Add Gemini and Grok options and explicit one-domain website suggestions | Provider formats validated; only the clicked hostname is sent; suggestion is previewed and saved only on acceptance | Implemented with mocked provider checks; live provider check pending a user API key |
 | 11 — YouTube analytics correction | Show daily totals from local-day-clipped playback records, include the active segment in live summaries, and refresh on playback updates | Totals reconcile to non-overlapping stored intervals plus at most one fresh active segment; live playback still needs a browser smoke check | Automated checks and Chromium builds complete; live YouTube check pending |
+| 12 — YouTube category correction | Let users edit an unknown video category or request an optional Gemini/Grok suggestion | Metadata-only request; confidence-validated response; category is saved only after user acceptance; provider tests pass | Automated provider checks complete; browser workflow pending a user API key |
 
 ## Phase 0 decisions
 
