@@ -25,7 +25,7 @@ function snapshot(observedAt: number, overrides: Partial<BrowserSnapshot> = {}):
   };
 }
 
-afterEach(() => { idNumber = 0; });
+afterEach(() => { idNumber = 0; vi.restoreAllMocks(); });
 
 describe('tracking engine', () => {
   it('records consecutive active-tab intervals without overlap', async () => {
@@ -135,14 +135,17 @@ describe('tracking engine', () => {
       id: 12,
       incognito: false,
       type: 'normal',
-      tabs: [{ active: true, id: 7, incognito: false, url: 'https://youtube.com/watch?v=abcdefghijk' }],
+      tabs: [],
     } as never);
+    const queryTabs = vi.spyOn(browser.tabs, 'query').mockResolvedValue([
+      { active: true, id: 7, windowId: 12, incognito: false, url: 'https://youtube.com/watch?v=abcdefghijk' },
+    ] as never);
     await expect(readBrowserContext(true)).resolves.toEqual({
       focused: true,
       context: { tabId: 7, windowId: 12, domain: 'youtube.com' },
     });
-    expect(getLastFocused).toHaveBeenCalledWith({ populate: true, windowTypes: ['normal'] });
-    getLastFocused.mockRestore();
+    expect(getLastFocused).toHaveBeenCalledWith({ windowTypes: ['normal'] });
+    expect(queryTabs).toHaveBeenCalledWith({ active: true, windowId: 12 });
   });
 
   it('recovers the active tab when Chromium omits populated tabs from that window', async () => {
@@ -156,9 +159,8 @@ describe('tracking engine', () => {
       focused: true,
       context: { tabId: 7, windowId: 12, domain: 'youtube.com' },
     });
-    expect(queryTabs).toHaveBeenCalledWith({ active: true });
-    getLastFocused.mockRestore();
-    queryTabs.mockRestore();
+    expect(getLastFocused).toHaveBeenCalledWith({ windowTypes: ['normal'] });
+    expect(queryTabs).toHaveBeenCalledWith({ active: true, windowId: 12 });
   });
 });
 
