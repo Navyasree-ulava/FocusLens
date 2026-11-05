@@ -219,9 +219,16 @@ export default defineBackground(() => {
       });
     }
   });
-  browser.notifications.onClicked.addListener(() => {
-    void browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') });
-  });
+  // `notifications` is an optional permission, so the API namespace is missing
+  // until the user grants it. Touching it here would abort the rest of startup
+  // and leave tracking, checkpointing, and the popup port unregistered.
+  try {
+    browser.notifications?.onClicked.addListener(() => {
+      void browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') });
+    });
+  } catch {
+    // Reminders stay off until the notification permission is granted.
+  }
   browser.runtime.onInstalled.addListener(() => void enqueue(initialize));
   browser.runtime.onStartup.addListener(() => void enqueue(initialize));
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
