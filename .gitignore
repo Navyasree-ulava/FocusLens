@@ -1,6 +1,92 @@
+# ==========================================
+# Dependencies
+# ==========================================
 node_modules/
+.pnp/
+.pnp.js
+
+# ==========================================
+# WXT build output
+# ==========================================
 .output/
 .wxt/
-coverage/
-.DS_Store
+dist/
+build/
+
+# ==========================================
+# Cache and temporary directories
+# ==========================================
+.cache/
 .npm-cache/
+.temp/
+.tmp/
+.freebuff/
+temp/
+tmp/
+
+# ==========================================
+# Environment variables and secrets
+# ==========================================
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# ==========================================
+# Logs
+# ==========================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ==========================================
+# Testing and coverage
+# ==========================================
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+.vitest/
+
+# ==========================================
+# TypeScript
+# ==========================================
+*.tsbuildinfo
+
+# ==========================================
+# Operating system files
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================================
+# IDE and editor files
+# ==========================================
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# ==========================================
+# Temporary and backup files
+# ==========================================
+*.tmp
+*.bak
+*.orig
+*.old
+
+# ==========================================
+# Markdown documentation
+# Ignore all Markdown files by default
+# ==========================================
+*.md
+
+# Keep essential documentation
+!README.md
+!ARCHITECTURE.md
+!TODO.md

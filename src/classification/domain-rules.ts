@@ -108,6 +108,6 @@ const domainRules = [
   { domain: 'ebay.com', category: 'Shopping' },
 ] satisfies DomainRule[];
 
-export const DOMAIN_RULES: readonly DomainRule[] = domainRules.toSorted(
-  (left, right) => right.domain.length - left.domain.length,
+export const DOMAIN_RULES: readonly DomainRule[] = Object.freeze(
+  [...domainRules].sort((left, right) => right.domain.length - left.domain.length)
 );
