@@ -7,6 +7,7 @@ import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
 import type { TrackerState } from '../../src/tracking/types';
 import { loadWellbeingSettings } from '../../src/wellbeing/settings-store';
+import { isBrowserExtensionContext } from '../../src/tracking/extension-context';
 
 interface PopupData {
   activeMs: number;
@@ -55,9 +56,11 @@ function statusLabel(state: TrackerState | null, paused: boolean): string {
 }
 
 export default function App() {
+  const extensionContext = isBrowserExtensionContext();
   const [data, setData] = useState<PopupData>(initialData);
 
   useEffect(() => {
+    if (!extensionContext) return;
     let mounted = true;
     const refresh = async () => {
       try {
@@ -100,13 +103,15 @@ export default function App() {
       window.clearInterval(timer);
       port?.disconnect();
     };
-  }, []);
+  }, [extensionContext]);
 
   const label = statusLabel(data.state, data.paused);
   const usedCategories = CATEGORY_DEFINITIONS
     .map(({ name }) => ({ name, value: data.categories[name] }))
     .filter(({ value }) => value > 0)
     .toSorted((left, right) => right.value - left.value);
+
+  if (!extensionContext) return <main className="grid min-h-screen w-[360px] place-items-center bg-[#111210] px-5 text-center text-[#f2f0e9]"><section><div className="brand-mark mx-auto grid size-9 place-items-center rounded-xl font-bold">F</div><h1 className="mt-3 text-sm font-semibold">Open FocusLens in your browser</h1><p className="mt-2 text-xs leading-5 text-[#aaa99f]">This view needs the FocusLens extension to read local activity.</p></section></main>;
 
   return <main className="popup-shell min-h-screen w-[360px] bg-[#111210] px-4 py-4 text-[#f2f0e9]">
     <header className="flex items-center justify-between">

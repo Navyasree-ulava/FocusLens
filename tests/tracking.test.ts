@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IndexedDbActivityStore } from '../src/tracking/indexeddb-store';
 import { TrackingEngine } from '../src/tracking/engine';
 import { contextFromWindow, getTrackableDomain, readBrowserContext } from '../src/tracking/browser-context';
+import { isBrowserExtensionContext } from '../src/tracking/extension-context';
 import { localDayBounds, splitIntervalAtLocalMidnights } from '../src/tracking/time';
 import type { BrowserSnapshot } from '../src/tracking/types';
 
@@ -112,6 +113,30 @@ describe('tracking engine', () => {
     expect(getTrackableDomain('chrome://settings')).toBeNull();
     expect(getTrackableDomain('file:///private/document.pdf')).toBeNull();
     expect(getTrackableDomain('not a URL')).toBeNull();
+  });
+
+  it('recognizes an extension runtime and safely handles regular web pages', () => {
+    expect(isBrowserExtensionContext({ id: 'focuslens-extension' })).toBe(true);
+    expect(isBrowserExtensionContext({})).toBe(false);
+    expect(isBrowserExtensionContext(undefined)).toBe(false);
+  });
+
+  it('retries IndexedDB after an upgrade is blocked instead of caching the rejection', async () => {
+    const databaseName = `focuslens-retry-test-${databaseNumber++}`;
+    let failNextOpen = true;
+    const factory = {
+      open: (name: string, version?: number) => {
+        if (!failNextOpen) return indexedDB.open(name, version);
+        failNextOpen = false;
+        const request = {} as IDBOpenDBRequest;
+        queueMicrotask(() => request.onblocked?.(new Event('blocked') as IDBVersionChangeEvent));
+        return request;
+      },
+    } as IDBFactory;
+    const store = new IndexedDbActivityStore(databaseName, factory);
+
+    await expect(store.readState()).rejects.toThrow('upgrade is blocked');
+    await expect(store.readState()).resolves.toBeNull();
   });
 
   it('keeps the active website available while the extension popup is open', () => {

@@ -12,6 +12,7 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 - **Idle handling:** The browser idle threshold is 60 seconds. On the idle transition, the engine closes at the event time minus that threshold, excluding the transition grace window conservatively. Locked state also counts as idle.
 - **Checkpoint/recovery:** A one-minute browser alarm rechecks current browser and idle state, then checkpoints the open interval. Each checkpoint commits activity rows and tracker state together in one IndexedDB transaction. An open interval survives service-worker termination. A `storage.session` marker distinguishes a worker restart from a new browser session; a browser restart closes the old interval at its last durable checkpoint. If event observation is delayed by more than two checkpoint periods, the tracker closes at the last durable checkpoint and starts a fresh interval when state is next observed. This may undercount a long gap, but does not count unknown time as active.
 - **Storage:** IndexedDB database `focuslens-local` contains `activity` (domain and interval only) and `metadata` (the current state needed for recovery). The popup reads this same store. No full URL, title, page content, or account data is collected.
+- **Connection recovery:** Failed or blocked database opens clear the cached open promise so later tracker events can retry. Connections close and clear the cache on `versionchange`, allowing a new schema connection after old pages close.
 - **Popup:** Shows real current tracking state, active hostname, and today's total from records plus the current open interval. It refreshes while open. It has no active pause control yet; wellbeing controls are Phase 5.
 
 ## Phase 2 classification
@@ -46,19 +47,18 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 - **Reminders:** Break reminders count actual stored foreground active time. Recreational-site check-ins count time only on domains classified as recreational by the current rules. Both remain off by default. The extension requests the optional `notifications` permission only after the user enables a reminder.
 - **Data controls:** Export downloads a JSON snapshot containing local activity, YouTube metadata, focus sessions, tracker state, and settings. Delete-all clears all FocusLens IndexedDB stores and extension-local/session settings after an explicit in-app confirmation.
 
-## Phase 6 optional AI
+## Phase 6 optional classification providers
 
-- **Provider contract:** `src/ai/types.ts` defines a provider-neutral request/result contract. `OpenAIResponsesProvider` implements the OpenAI-compatible Responses API with strict structured output, response validation, and a request timeout.
-- **Opt-in boundary:** AI starts disabled. Settings require an endpoint, model, and API key. Enabling requests optional host access for that endpoint origin; only HTTPS endpoints or loopback HTTP endpoints are accepted. The key lives in `chrome.storage.session` and is removed when AI is disabled or the browser session ends.
-- **Request scope:** No AI request runs automatically. The user clicks **Classify with AI** for an unknown current YouTube video. Only title, channel name, and Shorts status are sent. Video ID, URL, browsing history, and learning goals are excluded.
+- **Provider contract:** `src/ai/types.ts` contains provider settings and result types. Gemini, Grok, and OpenAI use structured text APIs. `SimpleJevClassifier` uses the open Simple Jev `/v1/classifier` choice API for website and video categories.
+- **Opt-in boundary:** Classification starts disabled. Settings require an endpoint and model; hosted text providers also require an API key. Simple Jev defaults to a self-hosted endpoint at `http://127.0.0.1:8000/v1/classifier` and does not use a key. Enabling requests optional host access for that endpoint origin; only HTTPS endpoints or loopback HTTP endpoints are accepted. Hosted provider keys live in `chrome.storage.session` and are removed when disabled or the browser session ends.
+- **Request scope:** No classification request runs automatically. The user requests one website or video suggestion. Website requests include only the normalized hostname; video requests include only title, channel name, and Shorts status. Video ID, URL, browsing history, and learning goals are excluded.
 - **Result handling:** Responses are validated against the allowed category list, confidence range, and reason length. AI results only classify videos that remain Unknown under user rules and metadata heuristics, and only when confidence is at least 0.6. Results are stored locally. Saving one as a user rule gives the user's choice precedence over AI and metadata.
-- **Failure behavior:** Network errors, timeouts, non-2xx responses, invalid JSON, and invalid structured fields surface an error and do not change local classification. Tests inject fetch responses and do not contact a real provider.
+- **Failure behavior:** Network errors, timeouts, non-2xx responses, invalid JSON, and invalid structured fields surface an error and do not change local classification. Every suggestion stays review-before-save. Simple Jev confidence is a model score, not a calibrated probability or a guarantee of correctness. Tests inject fetch responses and do not contact a provider.
 
 ## Planned modules
 
 - **Analytics:** Aggregations over stored intervals only. Ratios use classified browsing time and must be labeled as browsing classifications, not human productivity.
 - **Dashboard:** Reports, settings, sessions, and true empty states until records exist.
-- **Optional AI:** No provider or external processing by default. Any future integration must be opt-in, disclosed, and abstracted behind a typed provider contract.
 
 ## Manifest V3 permissions and limits
 

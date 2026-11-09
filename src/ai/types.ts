@@ -23,5 +23,5 @@ export interface AISettings {
   model: string;
 }
 
-export const AI_PROVIDERS = ['gemini', 'grok', 'openai'] as const;
+export const AI_PROVIDERS = ['jev', 'gemini', 'grok', 'openai'] as const;
 export type AIProvider = (typeof AI_PROVIDERS)[number];

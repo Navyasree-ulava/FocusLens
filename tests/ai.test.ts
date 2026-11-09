@@ -5,6 +5,7 @@ import { AI_API_KEY_SESSION_KEY, AI_SETTINGS_KEY, aiEndpointOrigin, aiHostPermis
 import { OpenAIResponsesProvider } from '../src/ai/responses-provider';
 import { AIWebsiteClassifier } from '../src/ai/website-provider';
 import { AIYouTubeClassifier } from '../src/ai/youtube-provider';
+import { SimpleJevClassifier } from '../src/ai/simple-jev';
 
 beforeEach(async () => {
   await browser.storage.local.clear();
@@ -14,8 +15,9 @@ beforeEach(async () => {
 describe('AI provider settings', () => {
   it('keeps AI disabled by default and rejects insecure remote endpoints', () => {
     expect(parseAISettings(undefined).enabled).toBe(false);
-    expect(parseAISettings(undefined).provider).toBe('gemini');
+    expect(parseAISettings(undefined).provider).toBe('jev');
     expect(endpointForProvider('gemini')).toContain('generativelanguage.googleapis.com');
+    expect(endpointForProvider('jev')).toBe('http://127.0.0.1:8000/v1/classifier');
     expect(endpointForProvider('grok')).toBe('https://api.x.ai/v1/responses');
     expect(parseAISettings({ enabled: false, endpoint: 'https://api.openai.com/v1/responses', model: '' }).provider).toBe('openai');
     expect(parseAISettings({ enabled: true, endpoint: 'http://example.com/v1/responses', model: 'x' })).toMatchObject({ enabled: false });
@@ -24,6 +26,18 @@ describe('AI provider settings', () => {
     expect(aiEndpointOrigin('https://api.example.com/v1/responses')).toBe('https://api.example.com');
     expect(aiEndpointOrigin('http://localhost:11434/v1/responses')).toBe('http://localhost:11434');
     expect(aiHostPermissionPattern('http://localhost:11434/v1/responses')).toBe('http://localhost/*');
+  });
+
+  it('saves Simple Jev without retaining an API key', async () => {
+    await saveAIAPIKey('previous-provider-key');
+    const settings = await saveAISettings({
+      enabled: true,
+      provider: 'jev',
+      endpoint: endpointForProvider('jev'),
+      model: 'Qwen/Qwen3.5-0.8B',
+    });
+    expect(settings).toMatchObject({ enabled: true, provider: 'jev' });
+    expect(await loadAIAPIKey()).toBeNull();
   });
 
   it('keeps the API key in session storage and clears it when AI is disabled', async () => {
@@ -70,6 +84,56 @@ describe('AI website classification', () => {
       output_text: JSON.stringify({ category: 'Not a category', confidence: 0.8, reason: 'Invalid test result.' }),
     }), { status: 200 }));
     await expect(classifier.classify('unknown.example')).rejects.toThrow('invalid website category');
+  });
+});
+
+describe('Simple Jev classification', () => {
+  const settings = {
+    enabled: true,
+    provider: 'jev' as const,
+    endpoint: endpointForProvider('jev'),
+    model: 'Qwen/Qwen3.5-0.8B',
+  };
+
+  it('scores website categories using only the normalized hostname', async () => {
+    let requestBody = '';
+    let authorization: string | null = null;
+    const classifier = new SimpleJevClassifier(settings, async (_input, init) => {
+      requestBody = String(init?.body);
+      authorization = new Headers(init?.headers).get('Authorization');
+      return new Response(JSON.stringify({ answers: { category: { type: 'choice', choice: 'D', confidence: 0.82, probabilities: {} } } }), { status: 200 });
+    });
+    await expect(classifier.classifyWebsite('https://classroom.example.edu/course/private?user=1')).resolves.toMatchObject({ category: 'Academic', confidence: 0.82 });
+    const request = JSON.parse(requestBody) as { model: string; state: { domain: string }; questions: { category: { type: string; criteria: Record<string, string> } } };
+    expect(request.model).toBe(settings.model);
+    expect(request.state).toEqual({ domain: 'classroom.example.edu' });
+    expect(request.questions.category.type).toBe('choice');
+    expect(request.questions.category.criteria.D).toContain('Academic');
+    expect(requestBody).not.toContain('private');
+    expect(requestBody).not.toContain('user=1');
+    expect(authorization).toBeNull();
+  });
+
+  it('scores video metadata only and rejects choices outside the supplied set', async () => {
+    let requestBody = '';
+    const classifier = new SimpleJevClassifier(settings, async (_input, init) => {
+      requestBody = String(init?.body);
+      return new Response(JSON.stringify({ answers: { category: { type: 'choice', choice: 'A', confidence: 0.91 } } }), { status: 200 });
+    });
+    await expect(classifier.classifyYouTube({ title: 'TypeScript course', channelName: 'Code Lab', isShort: false })).resolves.toMatchObject({ category: 'Technical Learning', confidence: 0.91 });
+    expect(requestBody).toContain('TypeScript course');
+    expect(requestBody).not.toContain('videoId');
+    expect(requestBody).not.toContain('videoUrl');
+
+    const invalid = new SimpleJevClassifier(settings, async () => new Response(JSON.stringify({ answers: { category: { type: 'choice', choice: 'Z', confidence: 0.9 } } }), { status: 200 }));
+    await expect(invalid.classifyYouTube({ title: 'A title', channelName: null, isShort: false })).rejects.toThrow('outside the supplied options');
+  });
+
+  it('surfaces endpoint failures and timeouts without accepting a category', async () => {
+    const unavailable = new SimpleJevClassifier(settings, async () => new Response('server unavailable', { status: 503 }));
+    await expect(unavailable.classifyWebsite('example.com')).rejects.toThrow('HTTP 503');
+    const timedOut = new SimpleJevClassifier(settings, async () => { throw new DOMException('aborted', 'AbortError'); });
+    await expect(timedOut.classifyWebsite('example.com')).rejects.toThrow('timed out');
   });
 });
 

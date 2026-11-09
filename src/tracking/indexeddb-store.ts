@@ -146,8 +146,10 @@ export class IndexedDbActivityStore implements ActivityStore {
 
   private openDatabase(): Promise<IDBDatabase> {
     if (this.databasePromise) return this.databasePromise;
-    this.databasePromise = new Promise((resolve, reject) => {
+    let opening: Promise<IDBDatabase>;
+    opening = new Promise((resolve, reject) => {
       const request = this.indexedDb.open(this.databaseName, DATABASE_VERSION);
+      let blocked = false;
       request.onupgradeneeded = () => {
         const database = request.result;
         if (!database.objectStoreNames.contains('activity')) {
@@ -172,12 +174,30 @@ export class IndexedDbActivityStore implements ActivityStore {
         }
       };
       request.onsuccess = () => {
-        request.result.onversionchange = () => request.result.close();
-        resolve(request.result);
+        const database = request.result;
+        if (blocked) {
+          // A blocked request can still succeed after the older connection closes.
+          // This attempt has already failed for its callers, so do not leak its connection.
+          database.close();
+          return;
+        }
+        database.onversionchange = () => {
+          database.close();
+          if (this.databasePromise === opening) this.databasePromise = null;
+        };
+        resolve(database);
       };
       request.onerror = () => reject(request.error ?? new Error('Unable to open local activity storage.'));
-      request.onblocked = () => reject(new Error('Local activity storage upgrade is blocked by another open page.'));
+      request.onblocked = () => {
+        blocked = true;
+        reject(new Error('Local activity storage upgrade is blocked by another open page.'));
+      };
     });
-    return this.databasePromise;
+    this.databasePromise = opening;
+    // A failed open must not poison this store for the lifetime of the worker.
+    void opening.catch(() => {
+      if (this.databasePromise === opening) this.databasePromise = null;
+    });
+    return opening;
   }
 }

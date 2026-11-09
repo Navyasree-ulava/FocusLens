@@ -5,12 +5,13 @@ export const AI_SETTINGS_KEY = 'focuslens.ai-settings';
 export const AI_API_KEY_SESSION_KEY = 'focuslens.ai-api-key';
 export const DEFAULT_AI_SETTINGS: AISettings = {
   enabled: false,
-  provider: 'gemini',
-  endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  provider: 'jev',
+  endpoint: 'http://127.0.0.1:8000/v1/classifier',
   model: '',
 };
 
 export const AI_PROVIDER_ENDPOINTS: Record<AIProvider, string> = {
+  jev: 'http://127.0.0.1:8000/v1/classifier',
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   grok: 'https://api.x.ai/v1/responses',
   openai: 'https://api.openai.com/v1/responses',
@@ -36,7 +37,7 @@ export function parseAISettings(value: unknown): AISettings {
   const endpoint = typeof candidate.endpoint === 'string' ? candidate.endpoint : DEFAULT_AI_SETTINGS.endpoint;
   const inferredProvider: AIProvider = endpoint.includes('generativelanguage.googleapis.com')
     ? 'gemini'
-    : endpoint.includes('api.x.ai') ? 'grok' : 'openai';
+    : endpoint.includes('api.x.ai') ? 'grok' : endpoint.endsWith('/v1/classifier') ? 'jev' : 'openai';
   const parsed = settingsSchema.safeParse({ ...candidate, provider: candidate.provider ?? inferredProvider });
   return parsed.success ? parsed.data : { ...DEFAULT_AI_SETTINGS };
 }
@@ -50,7 +51,7 @@ export async function saveAISettings(settings: AISettings): Promise<AISettings> 
   const parsed = settingsSchema.parse(settings);
   if (parsed.enabled && !parsed.model) throw new Error('Enter a model name before enabling AI classification.');
   await browser.storage.local.set({ [AI_SETTINGS_KEY]: parsed });
-  if (!parsed.enabled) await browser.storage.session.remove(AI_API_KEY_SESSION_KEY);
+  if (!parsed.enabled || parsed.provider === 'jev') await browser.storage.session.remove(AI_API_KEY_SESSION_KEY);
   return parsed;
 }
 

@@ -59,3 +59,10 @@
 - [x] Phase 13: Preserve active-tab context when the browser action popup is focused, and enable YouTube capture on both apex and `www` hosts.
 - [x] Add regression tests for popup-focus context recovery, omitted tab-list fallback, and YouTube host matching.
 - [ ] Reload the updated extension in Chrome and confirm the popup reports Tracking and today's usage increases on a `youtube.com` page.
+
+## Reliability and Simple Jev follow-up
+- [x] Clear failed or blocked IndexedDB open promises and reopen connections after `versionchange` so tracking can recover without restarting the worker.
+- [x] Show a clear extension-context message instead of crashing when popup or dashboard pages are opened outside the extension.
+- [x] Add optional Simple Jev category suggestions using its structured choice endpoint; keep requests user initiated and review-before-save.
+- [x] Test blocked storage recovery, Jev request privacy, response validation, timeout, and server errors.
+- [ ] Load the updated extension in a Chromium browser and run the tracking, settings, website suggestion, and YouTube suggestion flows.
