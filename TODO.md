@@ -66,3 +66,11 @@
 - [x] Add optional Simple Jev category suggestions using its structured choice endpoint; keep requests user initiated and review-before-save.
 - [x] Test blocked storage recovery, Jev request privacy, response validation, timeout, and server errors.
 - [ ] Load the updated extension in a Chromium browser and run the tracking, settings, website suggestion, and YouTube suggestion flows.
+
+## Phase 14 — Product simplification
+- [x] Reduce navigation to Overview, Activity, Websites, and Settings and remove focus sessions, learning goals, Insights, intent ratios, and the separate YouTube analytics view.
+- [x] Add a 12-month GitHub-style contribution heatmap with hover details, intensity levels, and click-to-inspect day details.
+- [x] Centralize interval deduplication, local-date grouping, duration formatting, heatmap intensity, and streak math in `src/analytics/activity.ts`.
+- [x] Keep YouTube tracking and historical IndexedDB data readable; only remove UI surfaces and dead calculations.
+- [x] Add deterministic tests for deduplication, midnight grouping, calendar range, tooltips, streaks, local date keys, and open-interval projection.
+- [ ] Load the built extension in Chrome and verify heatmap hover/selection, Activity filters, Website editing, tracking while switching tabs, and YouTube time.

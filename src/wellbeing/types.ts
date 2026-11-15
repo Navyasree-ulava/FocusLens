@@ -17,19 +17,8 @@ export interface FocusSession {
 }
 
 export interface WellbeingSettings {
-  dailyGoalMinutes: number;
+  minimumActiveDayMinutes: number;
   trackingPaused: boolean;
   excludedDomains: string[];
-  breakReminders: boolean;
-  breakReminderMinutes: number;
-  distractionReminders: boolean;
-  distractionReminderMinutes: number;
 }
 
-export interface FocusSessionSummary {
-  focusedMs: number;
-  productiveMs: number;
-  recreationalMs: number;
-  neutralMs: number;
-  unknownMs: number;
-}

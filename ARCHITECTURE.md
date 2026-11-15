@@ -13,7 +13,7 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 - **Checkpoint/recovery:** A one-minute browser alarm rechecks current browser and idle state, then checkpoints the open interval. Each checkpoint commits activity rows and tracker state together in one IndexedDB transaction. An open interval survives service-worker termination. A `storage.session` marker distinguishes a worker restart from a new browser session; a browser restart closes the old interval at its last durable checkpoint. If event observation is delayed by more than two checkpoint periods, the tracker closes at the last durable checkpoint and starts a fresh interval when state is next observed. This may undercount a long gap, but does not count unknown time as active.
 - **Storage:** IndexedDB database `focuslens-local` contains `activity` (domain and interval only) and `metadata` (the current state needed for recovery). The popup reads this same store. No full URL, title, page content, or account data is collected.
 - **Connection recovery:** Failed or blocked database opens clear the cached open promise so later tracker events can retry. Connections close and clear the cache on `versionchange`, allowing a new schema connection after old pages close.
-- **Popup:** Shows real current tracking state, active hostname, and today's total from records plus the current open interval. It refreshes while open. It has no active pause control yet; wellbeing controls are Phase 5.
+- **Popup:** Shows real current tracking state and today's total from records plus the current open interval. It refreshes while open. Tracking preferences live in the dashboard Settings.
 
 ## Phase 2 classification
 
@@ -34,31 +34,35 @@ WXT owns file-based extension entrypoints and generates the Manifest V3 manifest
 
 ## Phase 4 dashboard
 
-- **Data source:** `entrypoints/dashboard/App.tsx` reads activity intervals, tracker state, website settings, YouTube segments, and YouTube settings from the same local IndexedDB and `chrome.storage.local` stores as the popup.
-- **Time windows:** Daily trend bars calculate interval overlap with local calendar-day bounds, which accounts for variable-length days. The current open website interval is included only up to the current time. YouTube queries include segments that overlap the selected window even if they began earlier.
-- **Reports:** Overview shows today's active time and intent totals, a seven-day usage trend, top websites, recent activity, and YouTube totals. Activity, Websites, and YouTube views expose the corresponding stored records and rankings. Empty datasets show explicit empty states.
-- **Charts:** Small, dependency-free CSS bars are used for the trend and intent breakdown; their values are derived directly from stored durations. No demo values are seeded.
-- **Navigation:** The popup opens the extension dashboard in a browser tab. The dashboard refreshes periodically while open.
+- **Data source:** `entrypoints/dashboard/App.tsx` reads activity intervals, tracker state, website overrides, and settings from the same local IndexedDB and `chrome.storage.local` stores as the popup. All displayed totals come from normalized intervals, so overlapping or duplicated rows count once.
+- **Aggregation:** `src/analytics/activity.ts` owns local date keys, day bounds, duration formatting, heatmap intensity, calendar layout, and streak math. `buildActivityDays` clips records at local midnights, which handles variable-length days. The current open interval is projected only up to the current time and only while the browser is focused, non-idle, and tracking.
+- **Overview:** Today's active browsing time, the number of distinct websites visited today, the most-visited website today, the current and longest active-day streak, a 12-month heatmap, and a ranked website list. No intent ratios or secondary analytics cards.
+- **Heatmap:** Twelve calendar months in seven weekday rows and horizontally scrolling weeks. Level 0 means no activity; any recorded activity is at least level 1 even below the streak minimum. Hovering renders an accessible tooltip with the full date, exact duration, website count, and interval count. Selecting a day reveals its total, websites, and intervals with **Today** and **Close** controls; future days are disabled.
+- **Streak rule:** A local calendar day is active when it has at least the configurable minimum active browsing time (default one minute). Current streak counts back from today, or from yesterday when today is still below the minimum. Longest streak covers all recorded history: the dashboard reads the full activity store once and merges it with the fresher 12-month day summaries. Future days and idle time never count.
+- **Activity page:** Chronological foreground intervals grouped by local date with Today, 7-day, 30-day, and single-date filters. Rows show domain, start time, and duration; sub-minute intervals are shown in seconds rather than rounded up or hidden.
+- **Websites page:** Ranked domains with total time, category, optional manual category editing, and sorting by most time, least time, or alphabetically. Simple Jev suggestions remain manual and review-before-save.
+- **YouTube:** Tracking, metadata, and segmented playback remain unchanged and are stored in the `youtube` store. YouTube browsing time appears under `youtube.com` in Activity and Websites; the separate YouTube analytics and learning-goal surfaces were removed.
+- **Navigation:** Four sections (Overview, Activity, Websites, Settings). The popup opens the dashboard in a browser tab, and the dashboard refreshes from stored data every 30 seconds and on tracker messages.
 
-## Phase 5 wellbeing
+## Phase 5 settings and data controls
 
-- **Focus sessions:** Sessions persist in the local IndexedDB `focusSessions` store. Active blocks are recorded across pause/resume transitions. A persisted alarm closes a session at its selected active-time target; on browser restart, an active session is paused at its last durable checkpoint so shutdown time is not counted. Summaries intersect session blocks with stored website intervals and current classification rules.
-- **Goals and tracking controls:** Daily browsing goal, global pause, excluded hostnames, reminder preferences, and intervals are validated and stored in `chrome.storage.local`. Exclusions match the exact domain and its subdomains. The background tracker enforces pause and exclusions before it starts a new interval.
-- **Reminders:** Break reminders count actual stored foreground active time. Recreational-site check-ins count time only on domains classified as recreational by the current rules. Both remain off by default. The extension requests the optional `notifications` permission only after the user enables a reminder.
-- **Data controls:** Export downloads a JSON snapshot containing local activity, YouTube metadata, focus sessions, tracker state, and settings. Delete-all clears all FocusLens IndexedDB stores and extension-local/session settings after an explicit in-app confirmation.
+- **Tracking controls:** Global pause, excluded hostnames, and the minimum active-day threshold (one to 60 minutes, default one) are validated with Zod and stored in `chrome.storage.local`. Exclusions match the exact domain and its subdomains. The background tracker enforces pause and exclusions before it starts a new interval.
+- **Settings page:** Tracking preferences, excluded domains, optional Simple Jev configuration, data export, and delete-all. Removed feature settings (daily goals, reminders, learning goals) are ignored by the settings schema and safely dropped on the next save.
+- **Data controls:** Export downloads a JSON snapshot of activity, YouTube segments, tracker state, legacy focus sessions, AI classifications, and extension settings. Delete-all clears every FocusLens IndexedDB store and local/session settings after an explicit confirmation.
+- **Legacy storage:** The `focusSessions` object store stays at schema version 4 so existing data remains readable, exportable, and deletable. No UI writes focus sessions anymore; deleting the store would require a migration and is not necessary for the simplification.
 
 ## Phase 6 optional classification providers
 
 - **Provider contract:** `src/ai/types.ts` contains provider settings and result types. Gemini, Grok, and OpenAI use structured text APIs. `SimpleJevClassifier` uses the open Simple Jev `/v1/classifier` choice API for website and video categories.
-- **Opt-in boundary:** Classification starts disabled. Settings require an endpoint and model; hosted text providers also require an API key. Simple Jev defaults to a self-hosted endpoint at `http://127.0.0.1:8000/v1/classifier` and does not use a key. Enabling requests optional host access for that endpoint origin; only HTTPS endpoints or loopback HTTP endpoints are accepted. Hosted provider keys live in `chrome.storage.session` and are removed when disabled or the browser session ends.
+- **Opt-in boundary:** Classification starts disabled. Settings require an endpoint and model; hosted text providers also require an API key. Simple Jev defaults to Featherless' hosted demo endpoint and served Qwen classifier model and does not use a key. Enabling requests optional host access for that endpoint origin; HTTPS endpoints or loopback HTTP endpoints are accepted. Hosted provider keys live in `chrome.storage.session` and are removed when disabled or the browser session ends.
 - **Request scope:** No classification request runs automatically. The user requests one website or video suggestion. Website requests include only the normalized hostname; video requests include only title, channel name, and Shorts status. Video ID, URL, browsing history, and learning goals are excluded.
 - **Result handling:** Responses are validated against the allowed category list, confidence range, and reason length. AI results only classify videos that remain Unknown under user rules and metadata heuristics, and only when confidence is at least 0.6. Results are stored locally. Saving one as a user rule gives the user's choice precedence over AI and metadata.
 - **Failure behavior:** Network errors, timeouts, non-2xx responses, invalid JSON, and invalid structured fields surface an error and do not change local classification. Every suggestion stays review-before-save. Simple Jev confidence is a model score, not a calibrated probability or a guarantee of correctness. Tests inject fetch responses and do not contact a provider.
 
 ## Planned modules
 
-- **Analytics:** Aggregations over stored intervals only. Ratios use classified browsing time and must be labeled as browsing classifications, not human productivity.
-- **Dashboard:** Reports, settings, sessions, and true empty states until records exist.
+- **Analytics:** Aggregations over stored intervals only, shared by the dashboard and popup through one deduplicated interval source.
+- **Dashboard:** Four sections (Overview, Activity, Websites, Settings) with true empty states until records exist.
 
 ## Manifest V3 permissions and limits
 

@@ -66,9 +66,14 @@ export default defineContentScript({
       return currentVideo;
     }
 
+    // Throttle rather than debounce: YouTube mutates its DOM continuously during
+    // playback, so a resetting debounce could starve and miss play/pause changes.
     function scheduleRefresh() {
-      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(publishPageState, 150);
+      if (refreshTimer !== undefined) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
+        publishPageState();
+      }, 150);
     }
 
     const requestCurrentContext = async () => {

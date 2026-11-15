@@ -6,12 +6,12 @@ export const AI_API_KEY_SESSION_KEY = 'focuslens.ai-api-key';
 export const DEFAULT_AI_SETTINGS: AISettings = {
   enabled: false,
   provider: 'jev',
-  endpoint: 'http://127.0.0.1:8000/v1/classifier',
-  model: '',
+  endpoint: 'https://simple-jev-demo-api.featherless.ai/v1/classifier',
+  model: 'featherless-ai/Qwen3.6-35B-A3B-classifier',
 };
 
 export const AI_PROVIDER_ENDPOINTS: Record<AIProvider, string> = {
-  jev: 'http://127.0.0.1:8000/v1/classifier',
+  jev: DEFAULT_AI_SETTINGS.endpoint,
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   grok: 'https://api.x.ai/v1/responses',
   openai: 'https://api.openai.com/v1/responses',
@@ -21,7 +21,7 @@ const settingsSchema = z.object({
   enabled: z.boolean().default(false),
   provider: z.enum(AI_PROVIDERS).default(DEFAULT_AI_SETTINGS.provider),
   endpoint: z.string().trim().url().max(500).default(DEFAULT_AI_SETTINGS.endpoint),
-  model: z.string().trim().max(100).default(''),
+  model: z.string().trim().max(100).default(DEFAULT_AI_SETTINGS.model),
 }).refine(({ endpoint }) => {
   try {
     const url = new URL(endpoint);

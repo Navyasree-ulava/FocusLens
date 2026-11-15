@@ -1,81 +1,84 @@
-import { useEffect, useMemo, useState } from 'react';
-import { formatMinutes } from '../../src/format';
-import { CATEGORY_DEFINITIONS, defaultProductivityFor, PRODUCTIVITY_VALUES, type ProductivityValue, type WebsiteCategory } from '../../src/classification/categories';
-import { summarizeWebsiteTime } from '../../src/classification/productivity-summary';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { activityHistoryStart, activityLevel, activityTooltip, buildActivityCalendar, buildActivityDays, calculateActivityStreaks, currentOpenActivity, dateFromKey, dateKey, formatActivityDuration, formatDayLabel, mergeActivityDays, normalizeActivityRecords, todayDateKey, trackingStatus, type ActivityDay, type ActivityWeek } from '../../src/analytics/activity';
+import { buildWebsiteUsage, type WebsiteUsage } from '../../src/analytics/dashboard';
+import { CATEGORY_DEFINITIONS, defaultProductivityFor, type ProductivityValue, type WebsiteCategory } from '../../src/classification/categories';
 import { loadDomainOverrides, saveDomainOverride, type DomainOverride } from '../../src/classification/settings-store';
-import { buildDailyUsage, buildDashboardInsights, buildTimeline, buildWebsiteUsage, type DailyUsage, type DashboardInsights, type TimelineEntry, type WebsiteUsage } from '../../src/analytics/dashboard';
 import { IndexedDbActivityStore } from '../../src/tracking/indexeddb-store';
 import { localDayBounds } from '../../src/tracking/time';
 import type { ActivityRecord, TrackerState } from '../../src/tracking/types';
-import { loadYouTubeSettings, saveYouTubeOverride } from '../../src/youtube/settings-store';
-import { classifyYouTubeVideo } from '../../src/youtube/classify-video';
-import { YOUTUBE_CATEGORIES, type YouTubeCategory } from '../../src/youtube/types';
-import { clipYouTubeSegments, mostWatchedChannels, mostWatchedVideos, summarizeYouTubeTime, type YouTubeSummary } from '../../src/youtube/summary';
-import type { YouTubeCurrentState, YouTubeSegment } from '../../src/youtube/types';
-import type { YouTubeSettings } from '../../src/youtube/types';
-import { youtubeCurrentStateSchema } from '../../src/youtube/validation';
-import { endFocusSession, focusSessionElapsedMs, pauseFocusSession, resumeFocusSession, startFocusSession, summarizeFocusSession } from '../../src/wellbeing/focus-sessions';
 import { DEFAULT_WELLBEING_SETTINGS, loadWellbeingSettings, saveWellbeingSettings } from '../../src/wellbeing/settings-store';
-import type { FocusSession, WellbeingSettings } from '../../src/wellbeing/types';
-import type { AIClassification } from '../../src/ai/types';
-import { AI_PROVIDER_ENDPOINTS, DEFAULT_AI_SETTINGS, aiEndpointOrigin, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, saveAIAPIKey, saveAISettings } from '../../src/ai/settings';
-import { AI_PROVIDERS, type AISettings } from '../../src/ai/types';
+import type { WellbeingSettings } from '../../src/wellbeing/types';
+import type { AISettings } from '../../src/ai/types';
+import { AI_PROVIDER_ENDPOINTS, DEFAULT_AI_SETTINGS, aiHostPermissionPattern, loadAIAPIKey, loadAISettings, saveAIAPIKey, saveAISettings } from '../../src/ai/settings';
+import { AI_PROVIDERS } from '../../src/ai/types';
 import { AIWebsiteClassifier, type AIWebsiteClassification } from '../../src/ai/website-provider';
-import { AIYouTubeClassifier, type AIYouTubeSuggestion } from '../../src/ai/youtube-provider';
 import { SimpleJevClassifier } from '../../src/ai/simple-jev';
 import { isBrowserExtensionContext } from '../../src/tracking/extension-context';
 
-type View = 'Overview' | 'Activity' | 'Websites' | 'YouTube' | 'Focus Sessions' | 'Insights' | 'Settings';
+type View = 'Overview' | 'Activity' | 'Websites' | 'Settings';
+type ActivityRange = 'today' | '7' | '30' | 'custom';
+
 interface DashboardData {
   records: ActivityRecord[];
-  focusRecords: ActivityRecord[];
-  youtubeRecords: YouTubeSegment[];
-  youtubeToday: YouTubeSegment[];
-  youtubeWeek: YouTubeSegment[];
-  youtubeCurrentState: YouTubeCurrentState | null;
-  youtubeSettings: YouTubeSettings;
-  aiClassifications: AIClassification[];
+  days: ActivityDay[];
+  streakDays: ActivityDay[];
+  weeks: ActivityWeek[];
+  websites: WebsiteUsage[];
   overrides: DomainOverride[];
   tracker: TrackerState | null;
-  todayMs: number;
-  daily: DailyUsage[];
-  timeline: TimelineEntry[];
-  websites: WebsiteUsage[];
-  youtubeSummary: YouTubeSummary;
-  youtubeTodaySummary: YouTubeSummary;
-  insights: DashboardInsights;
-  sessions: FocusSession[];
   wellbeing: WellbeingSettings;
   loading: boolean;
   error: boolean;
 }
 
 const store = new IndexedDbActivityStore();
-const FOCUS_SESSION_END_ALARM = 'focuslens-focus-session-end';
-const emptyYouTube = summarizeYouTubeTime([]);
-const emptyInsights: DashboardInsights = { productiveHour: null, biggestDistraction: null, weeklyChangeMs: 0, thisWeekMs: 0, previousWeekMs: 0, learningGoals: [] };
 const emptyData: DashboardData = {
-  records: [], focusRecords: [], youtubeRecords: [], youtubeToday: [], youtubeWeek: [], youtubeCurrentState: null, youtubeSettings: { learningGoals: [], overrides: [] },
-  aiClassifications: [], overrides: [], tracker: null, todayMs: 0,
-  daily: [], timeline: [], websites: [], youtubeSummary: emptyYouTube, youtubeTodaySummary: emptyYouTube, insights: emptyInsights, sessions: [], wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
+  records: [], days: [], streakDays: [], weeks: [], websites: [], overrides: [], tracker: null,
+  wellbeing: DEFAULT_WELLBEING_SETTINGS, loading: true, error: false,
 };
+const DAY_MS = 24 * 60 * 60_000;
 
-function duration(ms: number): string {
-  if (ms > 0 && ms < 60_000) return '<1m';
-  return formatMinutes(ms / 60_000);
+const duration = formatActivityDuration;
+
+const HEATMAP_COLORS = ['bg-[#23251f]', 'bg-[#2f4a32]', 'bg-[#3f6b3c]', 'bg-[#5c9a4b]', 'bg-[#8ccb63]'] as const;
+const HEATMAP_HOVERS = ['hover:bg-[#2f3129]', 'hover:bg-[#3b5c3d]', 'hover:bg-[#4d7f47]', 'hover:bg-[#6cb256]', 'hover:bg-[#9cde70]'] as const;
+const HEATMAP_LEVEL_LABELS = ['No activity', 'Under 15 minutes', 'Under 1 hour', 'Under 3 hours', '3 hours or more'] as const;
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const TOOLTIP_WIDTH = 232;
+
+function heatmapCellClass(level: 0 | 1 | 2 | 3 | 4, selected: boolean): string {
+  return `${HEATMAP_COLORS[level]} ${HEATMAP_HOVERS[level]} ${selected ? 'ring-1 ring-[#d8eab7]' : ''}`;
 }
 
-function dateWindow(now: number, days: number) {
-  const start = new Date(localDayBounds(now).start);
-  start.setDate(start.getDate() - (days - 1));
-  return { start: start.getTime(), end: localDayBounds(now).end };
+function clipRecordsToRange(records: readonly ActivityRecord[], start: number, end: number): ActivityRecord[] {
+  return records.flatMap((record) => {
+    const clippedStart = Math.max(start, record.startedAt);
+    const clippedEnd = Math.min(end, record.endedAt);
+    if (clippedEnd <= clippedStart) return [];
+    const entries: ActivityRecord[] = [];
+    let cursor = clippedStart;
+    while (cursor < clippedEnd) {
+      const dayEnd = localDayBounds(cursor).end;
+      const segmentEnd = Math.min(clippedEnd, dayEnd);
+      entries.push({ ...record, id: `${record.id}-${cursor}`, startedAt: cursor, endedAt: segmentEnd, durationMs: segmentEnd - cursor });
+      cursor = segmentEnd;
+    }
+    return entries;
+  }).toSorted((left, right) => right.startedAt - left.startedAt);
 }
+
+
 
 export default function App() {
   const extensionContext = isBrowserExtensionContext();
   const [view, setView] = useState<View>('Overview');
   const [data, setData] = useState<DashboardData>(emptyData);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [activityRange, setActivityRange] = useState<ActivityRange>('today');
+  const [siteSort, setSiteSort] = useState<'most' | 'least' | 'alphabetical'>('most');
+  const recordsCache = useRef<ActivityRecord[] | null>(null);
+  const streakDaysCache = useRef<ActivityDay[] | null>(null);
 
   useEffect(() => {
     if (!extensionContext) {
@@ -86,55 +89,35 @@ export default function App() {
     const refresh = async () => {
       try {
         const now = Date.now();
-        const { start, end } = dateWindow(now, 14);
-        const [state, overrides, settings, records, youtubeRecords, sessions, wellbeing, aiClassifications, youtubeSession] = await Promise.all([
-          store.readState(), loadDomainOverrides(), loadYouTubeSettings(),
-          store.listRecords(start, end), store.listYouTubeSegments(start, now + 1), store.listFocusSessions(), loadWellbeingSettings(),
-          store.listAIClassifications(), browser.storage.session.get('focuslens-youtube-current-state'),
+        const historyStart = activityHistoryStart(now);
+        const recentStart = Math.max(historyStart - DAY_MS, localDayBounds(now - 2 * DAY_MS).start);
+        const [state, overrides, wellbeing, recentRecords] = await Promise.all([
+          store.readState(), loadDomainOverrides(), loadWellbeingSettings(), store.listRecords(recentStart, now + 1),
         ]);
-        const todayBounds = localDayBounds(now);
-        const parsedYouTubeState = youtubeCurrentStateSchema.safeParse(youtubeSession['focuslens-youtube-current-state']);
-        const persistedYouTubeState = parsedYouTubeState.success ? parsedYouTubeState.data : null;
-        const liveYouTubeState = persistedYouTubeState && now - persistedYouTubeState.updatedAt <= 20_000
-          ? persistedYouTubeState
-          : null;
-        const visibleYouTubeState = persistedYouTubeState && liveYouTubeState === null
-          ? { ...persistedYouTubeState, active: false, segmentStartedAt: null }
-          : persistedYouTubeState;
-        const youtubeWeekStart = dateWindow(now, 7).start;
-        const youtubeToday = clipYouTubeSegments(youtubeRecords, todayBounds.start, now, liveYouTubeState);
-        const youtubeWeek = clipYouTubeSegments(youtubeRecords, youtubeWeekStart, now, liveYouTubeState);
-        const oldestSessionStart = sessions.reduce((oldest, session) => Math.min(oldest, session.startedAt), start);
-        const focusRecords = oldestSessionStart < start ? await store.listRecords(oldestSessionStart, end) : records;
-        const currentOpenMs = state?.intervalStartedAt !== null && state?.context
-          ? Math.max(0, now - Math.max(state.intervalStartedAt, todayBounds.start))
-          : 0;
-        const currentDomain = state?.context?.domain;
-        const withOpen = currentOpenMs > 0 && currentDomain
-          ? [...records, { id: 'current-open', domain: currentDomain, startedAt: now - currentOpenMs, endedAt: now, durationMs: currentOpenMs }]
-          : records;
-        const todayStored = records.filter((record) => record.startedAt < todayBounds.end && record.endedAt > todayBounds.start)
-          .reduce((total, record) => total + Math.max(0, Math.min(record.endedAt, todayBounds.end) - Math.max(record.startedAt, todayBounds.start)), 0);
-        const daily = buildDailyUsage(withOpen, now, 7);
+        const storedRecords = recordsCache.current === null
+          ? await store.listRecords(historyStart - DAY_MS, now + 1)
+          : [...new Map([...recordsCache.current, ...recentRecords].map((record) => [record.id, record])).values()];
+        const normalizedStored = normalizeActivityRecords(storedRecords, historyStart, now + 1);
+        if (mounted) recordsCache.current = normalizedStored;
+        const open = currentOpenActivity(state, now, wellbeing.trackingPaused);
+        const records = normalizeActivityRecords(open ? [...normalizedStored, open] : normalizedStored, historyStart, now + 1);
+        const days = buildActivityDays(records, historyStart, now + 1);
+        let allTimeDays = streakDaysCache.current;
+        if (!allTimeDays) {
+          // The longest streak is all-time, so read the full activity store once per dashboard session.
+          const allRecords = await store.listRecords(0, now + 1);
+          const firstStart = allRecords.length ? localDayBounds(allRecords[0]!.startedAt).start : historyStart;
+          allTimeDays = buildActivityDays(normalizeActivityRecords(allRecords, firstStart, now + 1), firstStart, now + 1);
+          if (mounted) streakDaysCache.current = allTimeDays;
+        }
         if (mounted) setData({
-          records: withOpen,
-          focusRecords: focusRecords === records ? withOpen : [...focusRecords, ...withOpen.filter((record) => record.id === 'current-open')],
-          youtubeRecords,
-          youtubeToday,
-          youtubeWeek,
-          youtubeCurrentState: visibleYouTubeState,
-          youtubeSettings: settings,
-          aiClassifications,
+          records,
+          days,
+          streakDays: mergeActivityDays(allTimeDays, days),
+          weeks: buildActivityCalendar(days, now),
+          websites: buildWebsiteUsage(records, overrides),
           overrides,
           tracker: state,
-          todayMs: todayStored + currentOpenMs,
-          daily,
-          timeline: buildTimeline(withOpen.filter((record) => record.endedAt > todayBounds.start)),
-          websites: buildWebsiteUsage(withOpen.filter((record) => record.endedAt > dateWindow(now, 7).start), overrides),
-          youtubeSummary: summarizeYouTubeTime(youtubeWeek, settings, aiClassifications),
-          youtubeTodaySummary: summarizeYouTubeTime(youtubeToday, settings, aiClassifications),
-          insights: buildDashboardInsights(withOpen, youtubeRecords, now, overrides, settings, aiClassifications),
-          sessions,
           wellbeing,
           loading: false,
           error: false,
@@ -144,450 +127,360 @@ export default function App() {
       }
     };
     void refresh();
-    const onAnalyticsUpdate = (message: unknown) => {
-      if (message && typeof message === 'object' && 'type' in message && message.type === 'focuslens-analytics-updated') void refresh();
+    const onUpdate = (message: unknown) => {
+      if (message && typeof message === 'object' && 'type' in message &&
+        (message.type === 'focuslens-activity-updated' || message.type === 'focuslens-analytics-updated')) void refresh();
     };
-    browser.runtime.onMessage.addListener(onAnalyticsUpdate);
-    const timer = window.setInterval(() => void refresh(), 5_000);
-    return () => { mounted = false; window.clearInterval(timer); browser.runtime.onMessage.removeListener(onAnalyticsUpdate); };
+    browser.runtime.onMessage.addListener(onUpdate);
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => { mounted = false; window.clearInterval(timer); browser.runtime.onMessage.removeListener(onUpdate); };
   }, [extensionContext, refreshNonce]);
 
-  const todayStart = localDayBounds(Date.now()).start;
-  const websiteSummary = useMemo(() => summarizeWebsiteTime(
-    data.records.filter((record) => record.endedAt > todayStart)
-      .map(({ domain, startedAt, endedAt }) => ({
-        domain,
-        durationMs: Math.max(0, endedAt - Math.max(startedAt, todayStart)),
-      })), data.overrides,
-  ), [data.records, data.overrides, todayStart]);
-  const maxDaily = Math.max(1, ...data.daily.map((day) => day.durationMs));
-  const topVideos = mostWatchedVideos(data.youtubeWeek, 5);
-  const topTodayVideos = mostWatchedVideos(data.youtubeToday, 5);
-  const topChannels = mostWatchedChannels(data.youtubeToday, 5);
-  const status = data.tracker?.intervalStartedAt !== null && data.tracker?.intervalStartedAt !== undefined
-    ? 'Tracking now'
-    : data.tracker?.idle ? 'Paused while idle' : data.tracker?.focused === false ? 'Browser not focused' : 'Waiting for activity';
+  const now = Date.now();
+  const todayKeyValue = todayDateKey(now);
+  const today = data.days.find((day) => day.dateKey === todayKeyValue) ?? null;
+  const streaks = calculateActivityStreaks(data.streakDays, now, data.wellbeing.minimumActiveDayMinutes * 60_000);
+  const todayRecords = clipRecordsToRange(data.records, localDayBounds(now).start, now + 1);
+  const todaySites = buildWebsiteUsage(todayRecords, data.overrides);
+  const todayMostVisited = todaySites[0];
+  const selectedBounds = selectedDate ? localDayBounds(dateFromKey(selectedDate)) : null;
+  const selectedRecords = selectedBounds ? clipRecordsToRange(data.records, selectedBounds.start, selectedBounds.end) : [];
+  const selectedSites = buildWebsiteUsage(selectedRecords, data.overrides);
+  const selectedTotalMs = selectedRecords.reduce((total, record) => total + record.durationMs, 0);
 
-  const refresh = async () => {
-    setRefreshNonce((current) => current + 1);
-  };
-  const classifyWebsiteWithAI = async (domain: string) => {
-    const settings = await loadAISettings();
-    if (!settings.enabled) throw new Error('Enable classification in Settings first.');
-    if (settings.provider === 'jev') return new SimpleJevClassifier(settings).classifyWebsite(domain);
-    const apiKey = await loadAIAPIKey();
-    if (!apiKey) throw new Error('Add your provider key in Settings first.');
-    return new AIWebsiteClassifier(settings, apiKey).classify(domain);
-  };
-  const saveWebsiteAIClassification = async (domain: string, suggestion: AIWebsiteClassification) => {
-    await saveDomainOverride({ domain, category: suggestion.category, productivity: defaultProductivityFor(suggestion.category) });
-    await refresh();
-  };
-  const classifyYouTubeWithAI = async (video: ReturnType<typeof mostWatchedVideos>[number]) => {
-    const settings = await loadAISettings();
-    if (!settings.enabled) throw new Error('Enable classification in Settings first.');
-    if (settings.provider === 'jev') return new SimpleJevClassifier(settings).classifyYouTube({ title: video.title, channelName: video.channelName, isShort: video.isShort });
-    const apiKey = await loadAIAPIKey();
-    if (!apiKey) throw new Error('Add your provider key in Settings first.');
-    return new AIYouTubeClassifier(settings, apiKey).classify({ title: video.title, channelName: video.channelName, isShort: video.isShort });
-  };
-  const saveYouTubeAIClassification = async (video: ReturnType<typeof mostWatchedVideos>[number], suggestion: AIYouTubeSuggestion) => {
-    if (!video.videoId) throw new Error('This video has no ID to save a classification.');
-    await store.saveAIClassification({ videoId: video.videoId, ...suggestion, classifiedAt: Date.now() });
-    await refresh();
-  };
-  const saveYouTubeCategory = async (video: ReturnType<typeof mostWatchedVideos>[number], category: YouTubeCategory) => {
-    await saveYouTubeOverride('video', video.videoId, category);
-    await refresh();
-  };
-  const todayProgress = Math.min(100, Math.round(data.todayMs / (data.wellbeing.dailyGoalMinutes * 60_000) * 100));
-  if (!extensionContext) return <main className="grid min-h-screen place-items-center bg-[#111210] px-6 text-[#f2f0e9]"><section className="max-w-md rounded-2xl border border-white/[.08] bg-[#191a17] p-6"><h1 className="text-lg font-semibold">Open FocusLens in your browser</h1><p className="mt-2 text-sm leading-6 text-[#aaa99f]">The dashboard needs the FocusLens extension to read your locally stored activity. Open it from the extension menu in Chrome, Edge, or Brave.</p></section></main>;
+  const visibleActivity = useMemo(() => {
+    const current = Date.now();
+    if (activityRange === 'custom') {
+      const start = localDayBounds(dateFromKey(selectedDate ?? todayDateKey(current))).start;
+      return clipRecordsToRange(data.records, start, localDayBounds(start).end);
+    }
+    const days = activityRange === 'today' ? 1 : Number(activityRange);
+    const startDate = new Date(localDayBounds(current).start);
+    startDate.setDate(startDate.getDate() - (days - 1));
+    return clipRecordsToRange(data.records, startDate.getTime(), current + 1);
+  }, [activityRange, data.records, selectedDate]);
+
+  const sortedSites = useMemo(() => [...data.websites].toSorted((left, right) => {
+    if (siteSort === 'least') return left.durationMs - right.durationMs;
+    if (siteSort === 'alphabetical') return left.domain.localeCompare(right.domain);
+    return right.durationMs - left.durationMs;
+  }), [data.websites, siteSort]);
+
+  const refresh = () => setRefreshNonce((value) => value + 1);
+  const chooseDay = (day: ActivityDay) => setSelectedDate(day.dateKey);
+
+  if (!extensionContext) return <main className="grid min-h-screen place-items-center bg-[#111210] px-6 text-[#f2f0e9]"><section className="max-w-md rounded-2xl border border-white/[.08] bg-[#191a17] p-6"><h1 className="text-lg font-semibold">Open FocusLens in your browser</h1><p className="mt-2 text-sm leading-6 text-[#aaa99f]">The dashboard needs the FocusLens extension to read activity saved in this browser profile.</p></section></main>;
+
+  const status = trackingStatus(data.tracker, data.wellbeing.trackingPaused);
   return <div className="min-h-screen bg-[#111210] text-[#f2f0e9]">
     <aside className="fixed inset-y-0 left-0 hidden w-60 border-r border-white/[0.07] bg-[#151613] px-5 py-6 lg:block">
-      <div className="flex items-center gap-3"><span className="brand-mark grid size-9 place-items-center rounded-xl font-bold">F</span><div><p className="font-semibold tracking-tight">FocusLens</p><p className="text-[10px] tracking-[.16em] text-[#777870]">YOUR TIME, IN FOCUS</p></div></div>
-      <p className="mt-12 px-3 text-[10px] font-semibold uppercase tracking-[.14em] text-[#696a62]">Workspace</p>
-      <nav className="mt-3 space-y-1">{(['Overview', 'Activity', 'Websites', 'YouTube', 'Focus Sessions', 'Insights', 'Settings'] as View[]).map((item) => <button key={item} onClick={() => setView(item)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a] hover:bg-white/[.03]'}`}><span className="text-xs">{item === 'Overview' ? '◫' : item === 'Activity' ? '◷' : item === 'Websites' ? '◎' : item === 'YouTube' ? '▷' : item === 'Insights' ? '✧' : item === 'Settings' ? '⚙' : '◴'}</span>{item}</button>)}</nav>
-      <div className="absolute bottom-6 left-5 right-5 rounded-xl border border-white/[.07] bg-[#191a17] p-3"><p className="text-xs font-medium">Local by design</p><p className="mt-1 text-[10px] leading-4 text-[#777870]">Your activity stays in this browser profile.</p></div>
+      <Brand />
+      <p className="mt-12 px-3 text-[10px] font-semibold uppercase tracking-[.14em] text-[#696a62]">Your activity</p>
+      <Navigation view={view} setView={setView} vertical />
+      <div className="absolute bottom-6 left-5 right-5 rounded-xl border border-white/[.07] bg-[#191a17] p-3"><p className="text-xs font-medium">Stored on this device</p><p className="mt-1 text-[10px] leading-4 text-[#777870]">Browsing activity stays in this browser profile.</p></div>
     </aside>
     <main className="mx-auto max-w-7xl px-5 py-7 lg:ml-60 lg:px-10 lg:py-9">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-white/[.07] pb-6">
-        <div><p className="text-xs text-[#8f9087]">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1 className="mt-2 text-3xl font-semibold tracking-[-.05em]">{view}</h1><p className="mt-1 text-sm text-[#85867d]">A clear view of where your browsing time goes.</p></div>
-        <div className="flex items-center gap-2 rounded-full border border-white/[.08] bg-[#191a17] px-3 py-2 text-xs text-[#aaa99f]"><span className="size-2 rounded-full bg-[#a9da7b]" />{status}</div>
+        <div><p className="text-xs text-[#8f9087]">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1 className="mt-2 text-3xl font-semibold tracking-[-.05em]">{view}</h1><p className="mt-1 text-sm text-[#85867d]">See where your browsing time goes.</p></div>
+        <div className="flex items-center gap-2 rounded-full border border-white/[.08] bg-[#191a17] px-3 py-2 text-xs text-[#aaa99f]"><span className={`size-2 rounded-full ${status === 'Tracking active tab' ? 'bg-[#a9da7b]' : 'bg-[#777870]'}`} />{status}</div>
       </header>
-      <nav className="mt-4 flex gap-2 overflow-auto lg:hidden">{(['Overview', 'Activity', 'Websites', 'YouTube', 'Focus Sessions', 'Insights', 'Settings'] as View[]).map((item) => <button key={item} onClick={() => setView(item)} className={`shrink-0 rounded-lg px-3 py-2 text-xs ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a]'}`}>{item}</button>)}</nav>
-      {data.error && <div role="alert" className="mt-6 rounded-xl border border-[#bd765d]/30 bg-[#bd765d]/10 p-4 text-sm text-[#e4ac97]">FocusLens could not read local activity. Reload the dashboard to try again.</div>}
-      {data.loading ? <div className="py-20 text-center text-sm text-[#777870]">Loading local activity…</div> : <>
-        {view === 'Overview' && <>
-          <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric title="Active browsing today" value={duration(data.todayMs)} note="Foreground time only" />
-            <Metric title="Productive classified" value={duration(websiteSummary.productiveMs)} note="Based on your site rules" tone="green" />
-            <Metric title="Recreational classified" value={duration(websiteSummary.recreationalMs)} note="Based on your site rules" tone="orange" />
-            <Metric title="Browsing ratio" value={websiteSummary.productivityRatio === null ? '—' : `${Math.round(websiteSummary.productivityRatio * 100)}%`} note="Productive ÷ classified browsing" />
+      <Navigation view={view} setView={setView} />
+      {status === 'No website tab to track' && <p className="mt-4 text-[11px] text-[#777870]">FocusLens records regular website tabs. Extension pages and browser settings are skipped; past activity remains available below.</p>}
+      {data.error && <div role="alert" className="mt-5 rounded-xl border border-[#bd765d]/30 bg-[#bd765d]/10 p-4 text-sm text-[#e4ac97]">Could not read local activity. Try reloading the dashboard.</div>}
+      {data.loading ? <div className="py-20 text-center text-sm text-[#777870]">Loading your activity…</div> : <>
+        {view === 'Overview' && <div className="mt-6 space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Today" value={duration(today?.durationMs ?? 0)} note="Active browsing time" />
+            <Metric label="Websites today" value={String(today?.websites.length ?? 0)} note="Distinct domains" />
+            <Metric label="Most visited today" value={todayMostVisited?.domain ?? '—'} note={todayMostVisited ? duration(todayMostVisited.durationMs) : 'No activity yet'} />
+            <Metric label="Current streak" value={`${streaks.current} ${streaks.current === 1 ? 'day' : 'days'}`} note={`Longest ${streaks.longest}d · all recorded history · ${data.wellbeing.minimumActiveDayMinutes}m minimum`} />
           </div>
-          <div className="mt-5 grid gap-5 xl:grid-cols-[1.5fr_1fr]">
-            <Panel title="Browsing trend" subtitle="Daily active time · last 7 days"><div className="flex h-52 items-end gap-3 pt-5">{data.daily.map((day) => <div key={day.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-2"><span className="text-[10px] tabular-nums text-[#85867d]">{day.durationMs ? duration(day.durationMs) : ''}</span><div className="flex w-full flex-1 items-end"><div title={`${day.label}: ${duration(day.durationMs)}`} className={`w-full rounded-t-md ${day.durationMs ? 'bg-gradient-to-t from-[#7caa57] to-[#c9ee8e]' : 'bg-[#252620]'}`} style={{ height: `${day.durationMs ? Math.max(5, day.durationMs / maxDaily * 100) : 3}%` }} /></div><span className="text-[10px] text-[#777870]">{day.label}</span></div>)}</div></Panel>
-            <Panel title="Time by intent" subtitle="Unknown time is excluded from the ratio"><IntentBars summary={websiteSummary} /></Panel>
-          </div>
-          <div className="mt-5 grid gap-5 xl:grid-cols-2"><WebsiteTable websites={data.websites.slice(0, 5)} /><YouTubeCard summary={data.youtubeSummary} videos={topVideos.slice(0, 3)} /></div>
-          <div className="mt-5"><Timeline entries={data.timeline.slice(0, 8)} /></div>
-          <div className="mt-5"><Panel title="Daily browsing goal" subtitle={`${data.wellbeing.dailyGoalMinutes} minutes · ${todayProgress}% complete`}><div className="h-2 overflow-hidden rounded-full bg-[#252620]"><div className="h-full rounded-full bg-[#a9da7b]" style={{ width: `${todayProgress}%` }} /></div></Panel></div>
-        </>}
-        {view === 'Activity' && <div className="mt-7"><Timeline entries={data.timeline} detailed /></div>}
-        {view === 'Websites' && <div className="mt-7"><WebsiteTable websites={data.websites} detailed onSaveRule={async (domain, category, productivity) => {
-          await saveDomainOverride({ domain, category, productivity });
-          await refresh();
-        }} onClassifyUnknown={classifyWebsiteWithAI} onUseSuggestion={saveWebsiteAIClassification} /></div>}
-        {view === 'YouTube' && <div className="mt-7 space-y-5"><YouTubeNowPanel current={data.youtubeCurrentState} /><div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]"><YouTubeCard summary={data.youtubeTodaySummary} videos={topTodayVideos} detailed settings={data.youtubeSettings} classifications={data.aiClassifications} onClassify={classifyYouTubeWithAI} onUseSuggestion={saveYouTubeAIClassification} onSaveCategory={saveYouTubeCategory} /><Panel title="Most watched channels" subtitle="Ranked by today's playing time">{topChannels.length ? <div className="divide-y divide-white/[.06]">{topChannels.map((channel) => <div key={channel.channelName} className="flex justify-between py-3 text-sm"><span className="truncate pr-3">{channel.channelName}</span><span className="text-[#aaa99f]">{duration(channel.durationMs)}</span></div>)}</div> : <Empty>No YouTube viewing records today.</Empty>}</Panel></div></div>}
-        {view === 'Focus Sessions' && <FocusSessionsView sessions={data.sessions} records={data.focusRecords} overrides={data.overrides} refresh={refresh} />}
-        {view === 'Insights' && <InsightsView insights={data.insights} />}
-        {view === 'Settings' && <SettingsView settings={data.wellbeing} refresh={refresh} />}
+          <ActivityHeatmap weeks={data.weeks} selectedDate={selectedDate} todayKey={todayKeyValue} onSelect={chooseDay} />
+          {selectedDate && <SelectedDay date={selectedDate} records={selectedRecords} websites={selectedSites} totalMs={selectedTotalMs} onShowToday={() => setSelectedDate(todayKeyValue)} onClose={() => setSelectedDate(null)} />}
+          <WebsiteList websites={data.websites.slice(0, 8)} />
+        </div>}
+        {view === 'Activity' && <ActivityView records={visibleActivity} range={activityRange} selectedDate={selectedDate} setRange={setActivityRange} setSelectedDate={setSelectedDate} />}
+        {view === 'Websites' && <WebsitesView websites={sortedSites} sort={siteSort} setSort={setSiteSort} overrides={data.overrides} onSave={async (domain, category, productivity) => { await saveDomainOverride({ domain, category, productivity }); refresh(); }} />}
+        {view === 'Settings' && <SettingsView settings={data.wellbeing} refresh={refresh} clearCachedActivity={() => { recordsCache.current = null; streakDaysCache.current = null; refresh(); }} />}
       </>}
-      <footer className="mt-10 border-t border-white/[.07] py-5 text-center text-[10px] text-[#67685f]">Statistics are calculated from stored activity on this device. Browsing ratio describes site classifications, not personal productivity.</footer>
+      <footer className="mt-10 border-t border-white/[.07] py-5 text-center text-[10px] text-[#67685f]">Daily totals count foreground browsing once and use your local calendar day.</footer>
     </main>
   </div>;
 }
 
-function Metric({ title, value, note, tone }: { title: string; value: string; note: string; tone?: 'green' | 'orange' }) {
-  return <section className="rounded-2xl border border-white/[.07] bg-[#191a17] p-5"><p className="text-xs text-[#85867d]">{title}</p><p className={`mt-4 text-3xl font-semibold tracking-[-.05em] tabular-nums ${tone === 'green' ? 'text-[#c4e995]' : tone === 'orange' ? 'text-[#e6b278]' : ''}`}>{value}</p><p className="mt-2 text-[10px] text-[#6f7068]">{note}</p></section>;
+function Brand() {
+  return <div className="flex items-center gap-3"><span className="brand-mark grid size-9 place-items-center rounded-xl font-bold">F</span><div><p className="font-semibold tracking-tight">FocusLens</p><p className="text-[10px] tracking-[.16em] text-[#777870]">YOUR BROWSING, SIMPLIFIED</p></div></div>;
 }
 
-function InsightsView({ insights }: { insights: DashboardInsights }) {
-  const changePercent = insights.previousWeekMs > 0
-    ? Math.round((insights.weeklyChangeMs / insights.previousWeekMs) * 100)
-    : null;
-  const hourLabel = (hour: number) => new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' });
-  return <div className="mt-7 space-y-5">
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      <Metric title="Most focused hour" value={insights.productiveHour ? hourLabel(insights.productiveHour.hour) : '—'} note={insights.productiveHour ? `${duration(insights.productiveHour.durationMs)} of classified productive browsing this week` : 'No productive browsing time classified yet'} tone="green" />
-      <Metric title="Largest distraction source" value={insights.biggestDistraction?.domain ?? '—'} note={insights.biggestDistraction ? `${duration(insights.biggestDistraction.durationMs)} classified as recreational this week` : 'No recreational domains classified this week'} tone="orange" />
-      <Metric title="Browsing vs last week" value={changePercent === null ? '—' : `${insights.weeklyChangeMs > 0 ? '+' : ''}${changePercent}%`} note={`${duration(insights.thisWeekMs)} this week · ${duration(insights.previousWeekMs)} previous week`} />
-    </div>
-    <Panel title="Learning goals" subtitle="YouTube playing time matched to your saved goal phrases · last 7 days">
-      {insights.learningGoals.length ? <div className="divide-y divide-white/[.06]">{insights.learningGoals.map(({ goal, durationMs }) => <div key={goal} className="flex items-center justify-between gap-4 py-3"><span className="truncate text-xs">{goal}</span><span className="shrink-0 text-xs tabular-nums text-[#c4e995]">{duration(durationMs)}</span></div>)}</div> : <Empty>Add learning goals in the YouTube view to see matched video time here.</Empty>}
-    </Panel>
-    <p className="px-1 text-[10px] leading-5 text-[#777870]">Insights describe stored browsing patterns and your own classifications. The focused hour uses domains marked productive; it does not measure your work quality. Week comparisons use local calendar days.</p>
-  </div>;
+function Navigation({ view, setView, vertical = false }: { view: View; setView: (view: View) => void; vertical?: boolean }) {
+  const items: View[] = ['Overview', 'Activity', 'Websites', 'Settings'];
+  return <nav className={`${vertical ? 'mt-3 space-y-1' : 'mt-4 flex gap-2 overflow-auto lg:hidden'}`} aria-label="Main navigation">
+    {items.map((item) => <button key={item} type="button" onClick={() => setView(item)} aria-current={view === item ? 'page' : undefined}
+      className={`${vertical ? 'flex w-full items-center gap-3 text-left' : 'shrink-0'} rounded-lg px-3 py-2.5 text-sm ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a] hover:bg-white/[.03]'}`}>{item}</button>)}
+  </nav>;
 }
 
-function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
-  return <section className="rounded-2xl border border-white/[.07] bg-[#191a17] p-5"><div className="mb-4"><h2 className="text-sm font-medium">{title}</h2>{subtitle && <p className="mt-1 text-[10px] text-[#777870]">{subtitle}</p>}</div>{children}</section>;
+function Metric({ label, value, note }: { label: string; value: string; note: string }) {
+  return <section className="min-w-0 rounded-xl border border-white/[.07] bg-[#191a17] p-4"><p className="text-[11px] text-[#85867d]">{label}</p><p className="mt-3 truncate text-2xl font-semibold tracking-[-.04em] tabular-nums text-[#e7e6df]">{value}</p><p className="mt-1.5 truncate text-[10px] text-[#6f7068]">{note}</p></section>;
 }
 
-function IntentBars({ summary }: { summary: ReturnType<typeof summarizeWebsiteTime> }) {
-  const total = summary.classifiedMs;
-  const entries = [
-    ['Productive', summary.productiveMs, 'bg-[#a9da7b]'],
-    ['Recreational', summary.recreationalMs, 'bg-[#dda36f]'],
-    ['Neutral', summary.neutralMs, 'bg-[#85867d]'],
-  ] as const;
-  return <div>{total > 0 ? <div className="mt-6 flex h-3 overflow-hidden rounded-full bg-[#252620]">{entries.map(([label, value, color]) => <div key={label} title={`${label} ${duration(value)}`} className={color} style={{ width: `${value / total * 100}%` }} />)}</div> : <Empty>No classified browsing time yet.</Empty>}<div className="mt-5 space-y-3">{entries.map(([label, value, color]) => <div key={label} className="flex items-center justify-between text-xs"><span className="flex items-center gap-2 text-[#999a91]"><i className={`size-2 rounded-full ${color}`} />{label}</span><b className="font-medium text-[#d3d1c7]">{duration(value)}</b></div>)}<div className="flex justify-between border-t border-white/[.06] pt-3 text-[10px] text-[#777870]"><span>Unknown</span><span>{duration(summary.unknownMs)}</span></div></div></div>;
+function Panel({ title, subtitle, children, className = '' }: { title: string; subtitle?: string; children: React.ReactNode; className?: string }) {
+  return <section className={`rounded-2xl border border-white/[.07] bg-[#191a17] p-5 ${className}`}><header className="mb-4"><h2 className="text-sm font-medium">{title}</h2>{subtitle && <p className="mt-1 text-[10px] text-[#777870]">{subtitle}</p>}</header>{children}</section>;
 }
 
-function WebsiteTable({ websites, detailed = false, onSaveRule, onClassifyUnknown, onUseSuggestion }: { websites: WebsiteUsage[]; detailed?: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void>; onClassifyUnknown?: (domain: string) => Promise<AIWebsiteClassification>; onUseSuggestion?: (domain: string, suggestion: AIWebsiteClassification) => Promise<void> }) {
-  return <Panel title={detailed ? 'Websites and categories' : 'Top websites'} subtitle={detailed ? 'Change categories to match how you use a site. Optional providers can suggest a category.' : 'Ranked by active time on this device'}>{websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site, index) => <WebsiteRow key={site.domain} site={site} index={index} editable={detailed} onSaveRule={onSaveRule} onClassifyUnknown={onClassifyUnknown} onUseSuggestion={onUseSuggestion} />)}</div> : <Empty>No website activity recorded yet. Sites you visit will appear here.</Empty>}</Panel>;
-}
+function ActivityHeatmap({ weeks, selectedDate, todayKey, onSelect }: { weeks: ActivityWeek[]; selectedDate: string | null; todayKey: string; onSelect: (day: ActivityDay) => void }) {
+  const [hovered, setHovered] = useState<{ day: ActivityDay; x: number; y: number } | null>(null);
+  const columns = Math.max(weeks.length, 1);
+  const todayDate = dateFromKey(todayKey);
+  const showTooltip = (day: ActivityDay, x: number, y: number) => setHovered({ day, x, y });
 
-function WebsiteRow({ site, index, editable, onSaveRule, onClassifyUnknown, onUseSuggestion }: { site: WebsiteUsage; index: number; editable: boolean; onSaveRule?: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void>; onClassifyUnknown?: (domain: string) => Promise<AIWebsiteClassification>; onUseSuggestion?: (domain: string, suggestion: AIWebsiteClassification) => Promise<void> }) {
-  const [category, setCategory] = useState<WebsiteCategory>(site.category);
-  const [productivity, setProductivity] = useState<ProductivityValue>(site.productivity);
-  const [message, setMessage] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [suggestion, setSuggestion] = useState<AIWebsiteClassification | null>(null);
-  const [classifying, setClassifying] = useState(false);
-  useEffect(() => { setCategory(site.category); setProductivity(site.productivity); }, [site.category, site.productivity]);
-  const save = async () => {
-    if (!onSaveRule) return;
-    setSaving(true);
-    try { await onSaveRule(site.domain, category, productivity); setMessage('Saved'); }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save this category.'); }
-    finally { setSaving(false); }
-  };
-  const classify = async () => {
-    if (!onClassifyUnknown) return;
-    setClassifying(true);
-    try { setSuggestion(await onClassifyUnknown(site.domain)); setMessage('AI suggestion is ready. Review before accepting.'); }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not classify this site.'); }
-    finally { setClassifying(false); }
-  };
-  const acceptSuggestion = async () => {
-    if (!suggestion || !onUseSuggestion) return;
-    setSaving(true);
-    try { await onUseSuggestion(site.domain, suggestion); setSuggestion(null); setMessage('Saved your category.'); }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save the suggested category.'); }
-    finally { setSaving(false); }
-  };
-  return <div className="flex items-start gap-3 py-3">
-    <span className="w-5 pt-1 text-[10px] text-[#686960]">{index + 1}</span>
-    <div className="min-w-0 flex-1">
-      <div className="flex items-center justify-between gap-3"><p className="truncate text-xs font-medium">{site.domain}</p><span className="shrink-0 text-xs tabular-nums text-[#aaa99f]">{duration(site.durationMs)}</span></div>
-      {!editable ? <p className="mt-1 text-[10px] text-[#777870]">{site.category} · {site.productivity}</p> : <>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-          <select aria-label={`Category for ${site.domain}`} value={category} onChange={(event) => { const next = event.target.value as WebsiteCategory; setCategory(next); setProductivity(next === 'Unknown' ? 'unknown' : defaultProductivityFor(next)); }} className="w-full rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-[10px] text-[#d8d6cc]">
-            {CATEGORY_DEFINITIONS.map(({ name }) => <option key={name} value={name}>{name}</option>)}
-          </select>
-          <select aria-label={`Browsing intent for ${site.domain}`} value={productivity} onChange={(event) => setProductivity(event.target.value as ProductivityValue)} disabled={category === 'Unknown'} className="w-full rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-[10px] text-[#d8d6cc] disabled:opacity-50">
-            {PRODUCTIVITY_VALUES.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}
-          </select>
+  return <Panel title="Browsing activity" subtitle="Past 12 months · hover a day for details · select a day to inspect it">
+    <div onMouseLeave={() => setHovered(null)}>
+      <div className="overflow-x-auto pb-2" role="group" aria-label="Browsing activity calendar">
+        <div className="grid gap-x-1 gap-y-1" style={{ minWidth: Math.max(660, 42 + columns * 11), gridTemplateColumns: `30px repeat(${columns}, minmax(9px, 1fr))` }}>
+          <span aria-hidden="true" />
+          {weeks.map((week, index) => <span key={`month-${index}`} data-month-label={week.monthLabel ?? undefined} className="h-4 min-w-0 whitespace-nowrap text-[9px] leading-4 text-[#85867d]">{week.monthLabel}</span>)}
+          {WEEKDAY_LABELS.map((label, dayIndex) => <HeatmapRow key={label} label={label} dayIndex={dayIndex} weeks={weeks} selectedDate={selectedDate} todayDate={todayDate} onSelect={onSelect} onHover={showTooltip} onHoverEnd={() => setHovered(null)} />)}
         </div>
-        <div className="mt-2 flex items-center justify-between gap-2"><span role="status" className="min-w-0 text-[10px] text-[#b3d783]">{message}</span><button type="button" onClick={() => void save()} disabled={saving || (category === site.category && productivity === site.productivity)} className="shrink-0 rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#d8d6cc] disabled:opacity-40">{saving ? 'Saving…' : 'Save category'}</button></div>
-        {site.category === 'Unknown' && onClassifyUnknown && <div className="mt-2">
-          {!suggestion ? <button type="button" onClick={() => void classify()} disabled={classifying} className="rounded-lg border border-[#c9ee8e]/20 px-2.5 py-1.5 text-[10px] text-[#c9ee8e] disabled:opacity-50">{classifying ? 'Checking…' : 'Suggest category'}</button> : <div className="rounded-lg border border-[#c9ee8e]/15 bg-[#c9ee8e]/[.04] p-3">
-            <p className="text-[11px] text-[#d8d6cc]">Suggestion: <b>{suggestion.category}</b> · {Math.round(suggestion.confidence * 100)}%</p>
-            <p className="mt-1 text-[10px] text-[#999a91]">{suggestion.reason}</p>
-            <div className="mt-2 flex gap-2"><button type="button" onClick={() => void acceptSuggestion()} disabled={saving} className="rounded-lg bg-[#c9ee8e] px-2.5 py-1.5 text-[10px] font-semibold text-[#20251b]">{saving ? 'Saving…' : 'Use suggestion'}</button><button type="button" onClick={() => setSuggestion(null)} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#aaa99f]">Dismiss</button></div>
-          </div>}
-          <p className="mt-1 text-[9px] leading-4 text-[#777870]">Only this hostname is sent when you click. It is saved only if you accept the result.</p>
-        </div>}
-      </>}
+      </div>
+      {hovered && <HeatmapTooltip day={hovered.day} x={hovered.x} y={hovered.y} />}
     </div>
-  </div>;
-}
-
-function titleCase(value: string): string { return value.charAt(0).toUpperCase() + value.slice(1); }
-
-function Timeline({ entries, detailed = false }: { entries: TimelineEntry[]; detailed?: boolean }) {
-  return <Panel title={detailed ? 'Activity timeline' : 'Recent activity'} subtitle="Individual stored foreground intervals">{entries.length ? <div className="divide-y divide-white/[.06]">{entries.map((entry, index) => <div key={`${entry.startedAt}-${index}`} className="flex items-center gap-3 py-3"><span className="w-16 text-[10px] tabular-nums text-[#777870]">{new Date(entry.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span><span className="size-2 rounded-full bg-[#a9da7b]" /><p className="min-w-0 flex-1 truncate text-xs">{entry.domain}</p><span className="text-xs tabular-nums text-[#aaa99f]">{duration(entry.durationMs)}</span></div>)}</div> : <Empty>No activity recorded yet. New intervals will appear here.</Empty>}</Panel>;
-}
-
-function YouTubeNowPanel({ current }: { current: YouTubeCurrentState | null }) {
-  const live = current?.active && current.segmentStartedAt !== null;
-  const metadata = current?.pageState.metadata;
-  return <Panel title="Now on YouTube" subtitle={live ? 'Live foreground playback' : 'Live playback appears while YouTube is the active browser tab'}>
-    {live ? <div className="flex items-center justify-between gap-4"><div className="min-w-0"><p className="truncate text-sm font-medium">{metadata?.title ?? 'YouTube video'}</p><p className="mt-1 truncate text-xs text-[#85867d]">{metadata?.channelName ?? 'Unknown channel'} · {current.pageState.playbackState}</p></div><span className="shrink-0 rounded-full bg-[#c9ee8e]/10 px-3 py-1 text-xs text-[#c9ee8e]">{duration(Math.max(0, Date.now() - current.segmentStartedAt!))}</span></div>
-      : <p className="text-xs text-[#85867d]">Switch to YouTube to see the current video and its live playing time. Daily totals below include saved foreground activity and the current session when available.</p>}
+    <div className="mt-3 flex items-center justify-between gap-3 text-[9px] text-[#777870]">
+      <span>Less activity</span>
+      <span className="flex items-center gap-1" aria-label="Activity intensity scale">
+        {HEATMAP_COLORS.map((color, level) => <i key={color} className={`size-2.5 rounded-[3px] ${color}`} title={HEATMAP_LEVEL_LABELS[level]} />)}
+      </span>
+      <span>More</span>
+    </div>
   </Panel>;
 }
 
-function YouTubeCard({ summary, videos, detailed = false, settings, classifications = [], onClassify, onUseSuggestion, onSaveCategory }: {
-  summary: YouTubeSummary;
-  videos: ReturnType<typeof mostWatchedVideos>;
-  detailed?: boolean;
-  settings?: YouTubeSettings;
-  classifications?: AIClassification[];
-  onClassify?: (video: ReturnType<typeof mostWatchedVideos>[number]) => Promise<AIYouTubeSuggestion>;
-  onUseSuggestion?: (video: ReturnType<typeof mostWatchedVideos>[number], suggestion: AIYouTubeSuggestion) => Promise<void>;
-  onSaveCategory?: (video: ReturnType<typeof mostWatchedVideos>[number], category: YouTubeCategory) => Promise<void>;
+function HeatmapRow({ label, dayIndex, weeks, selectedDate, todayDate, onSelect, onHover, onHoverEnd }: {
+  label: string; dayIndex: number; weeks: ActivityWeek[]; selectedDate: string | null; todayDate: number;
+  onSelect: (day: ActivityDay) => void; onHover: (day: ActivityDay, x: number, y: number) => void; onHoverEnd: () => void;
 }) {
-  const categories = [
-    ['Educational', summary.educationalViewingMs], ['Entertainment', summary.entertainmentViewingMs], ['Shorts', summary.shortsMs],
-  ] as const;
-  return <Panel title={detailed ? 'YouTube today' : 'YouTube this week'} subtitle="Foreground activity on this device"><div className="grid grid-cols-2 gap-3">{categories.map(([label, value]) => <div key={label} className="rounded-xl bg-[#20211d] p-3"><p className="text-[10px] text-[#85867d]">{label}</p><p className="mt-2 text-lg font-medium tabular-nums">{duration(value)}</p></div>)}</div><div className="mt-4 grid grid-cols-3 gap-2 text-[10px] text-[#85867d]">{[['Paused', summary.pausedMs], ['Buffering', summary.bufferingMs], ['Browsing', summary.browsingMs]].map(([label, value]) => <div key={label as string}>{label}<b className="mt-1 block font-medium text-[#c9c7bc]">{duration(value as number)}</b></div>)}</div><div className="mt-5 border-t border-white/[.06] pt-4"><p className="mb-2 text-[10px] text-[#85867d]">Most watched videos</p>{videos.length ? videos.map((video) => <YouTubeVideoRow key={video.videoId} video={video} settings={settings} aiClassification={classifications.find((item) => item.videoId === video.videoId)} onClassify={onClassify} onUseSuggestion={onUseSuggestion} onSaveCategory={onSaveCategory} />) : <Empty>No YouTube viewing records yet.</Empty>}</div></Panel>;
+  return <>
+    <span className={`pr-1 text-right text-[9px] leading-[10px] text-[#777870] ${dayIndex % 2 === 1 ? 'invisible sm:visible' : ''}`}>{label}</span>
+    {weeks.map((week, index) => {
+      const day = week.days[dayIndex]!;
+      const isFuture = day.date > todayDate;
+      const isSelected = selectedDate === day.dateKey;
+      const isToday = day.dateKey === dateKey(todayDate);
+      return <button key={`${label}-${index}`} type="button" disabled={isFuture} aria-label={activityTooltip(day)}
+        aria-pressed={isSelected} onClick={() => onSelect(day)}
+        onMouseEnter={(event) => onHover(day, event.clientX, event.clientY)}
+        onFocus={(event) => { const rect = event.currentTarget.getBoundingClientRect(); onHover(day, rect.left + rect.width / 2, rect.top); }}
+        onBlur={onHoverEnd}
+        className={`aspect-square w-full rounded-[3px] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-white disabled:cursor-default disabled:opacity-25 ${heatmapCellClass(activityLevel(day.durationMs), isSelected)} ${isToday && !isSelected ? 'ring-1 ring-white/25' : ''}`} />;
+    })}
+  </>;
 }
 
-function YouTubeVideoRow({ video, settings, aiClassification, onClassify, onUseSuggestion, onSaveCategory }: {
-  video: ReturnType<typeof mostWatchedVideos>[number];
-  settings?: YouTubeSettings;
-  aiClassification?: AIClassification;
-  onClassify?: (video: ReturnType<typeof mostWatchedVideos>[number]) => Promise<AIYouTubeSuggestion>;
-  onUseSuggestion?: (video: ReturnType<typeof mostWatchedVideos>[number], suggestion: AIYouTubeSuggestion) => Promise<void>;
-  onSaveCategory?: (video: ReturnType<typeof mostWatchedVideos>[number], category: YouTubeCategory) => Promise<void>;
-}) {
-  const [suggestion, setSuggestion] = useState<AIYouTubeSuggestion | null>(null);
-  const [category, setCategory] = useState<YouTubeCategory>('Unknown');
-  const [status, setStatus] = useState('');
-  const [busy, setBusy] = useState(false);
-  const metadata = { videoId: video.videoId, title: video.title, channelName: video.channelName, videoUrl: video.videoUrl, isShort: video.isShort };
-  const classification = classifyYouTubeVideo(metadata, settings, aiClassification);
-  useEffect(() => { setCategory(classification.category); }, [classification.category]);
-  const classify = async () => {
-    if (!onClassify) return;
-    setBusy(true);
-    try { setSuggestion(await onClassify(video)); setStatus('Suggestion ready. Review it before saving.'); }
-    catch (error) { setStatus(error instanceof Error ? error.message : 'Could not classify this video.'); }
-    finally { setBusy(false); }
-  };
-  const accept = async () => {
-    if (!suggestion || !onUseSuggestion) return;
-    setBusy(true);
-    try { await onUseSuggestion(video, suggestion); setSuggestion(null); setStatus('Saved.'); }
-    catch (error) { setStatus(error instanceof Error ? error.message : 'Could not save classification.'); }
-    finally { setBusy(false); }
-  };
-  const saveCategory = async () => {
-    if (!onSaveCategory) return;
-    setBusy(true);
-    try { await onSaveCategory(video, category); setStatus('Saved your video rule.'); }
-    catch (error) { setStatus(error instanceof Error ? error.message : 'Could not save category.'); }
-    finally { setBusy(false); }
-  };
-  return <div className="border-t border-white/[.04] py-2.5 text-xs">
-    <div className="flex items-center justify-between gap-3"><a href={video.videoUrl} target="_blank" rel="noreferrer" className="min-w-0 truncate hover:text-[#c9ee8e]">{video.title ?? video.videoId}<span className="mt-1 block truncate text-[10px] text-[#777870]">{video.channelName ?? 'Unknown channel'} · {classification.category}</span></a><span className="shrink-0 text-[10px] text-[#aaa99f]">{duration(video.durationMs)}</span></div>
-    {onSaveCategory && <div className="mt-2 flex flex-wrap items-center gap-2"><select aria-label={`Category for ${video.title ?? video.videoId}`} value={category} onChange={(event) => setCategory(event.target.value as YouTubeCategory)} className="rounded-lg border border-white/[.1] bg-[#111210] px-2 py-1.5 text-[10px]">{YOUTUBE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}</select><button type="button" onClick={() => void saveCategory()} disabled={busy || category === classification.category} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] disabled:opacity-40">Save category</button>{classification.category === 'Unknown' && onClassify && !suggestion && <button type="button" onClick={() => void classify()} disabled={busy} className="rounded-lg border border-[#c9ee8e]/20 px-2.5 py-1.5 text-[10px] text-[#c9ee8e] disabled:opacity-50">{busy ? 'Checking…' : 'Suggest category'}</button>}{suggestion && <div className="w-full rounded-lg border border-[#c9ee8e]/15 bg-[#c9ee8e]/[.04] p-2.5"><p className="text-[10px]">Suggestion: <b>{suggestion.category}</b> · {Math.round(suggestion.confidence * 100)}%</p><p className="mt-1 text-[10px] text-[#999a91]">{suggestion.reason}</p><button type="button" onClick={() => void accept()} disabled={busy || suggestion.confidence < 0.6} className="mt-2 rounded-lg bg-[#c9ee8e] px-2.5 py-1.5 text-[10px] font-semibold text-[#20251b] disabled:opacity-40">{busy ? 'Saving…' : suggestion.confidence < 0.6 ? 'Low confidence' : 'Use suggestion'}</button></div>}<span role="status" className="text-[10px] text-[#b3d783]">{status}</span></div>}
+function HeatmapTooltip({ day, x, y }: { day: ActivityDay; x: number; y: number }) {
+  const left = Math.max(8, Math.min(x - TOOLTIP_WIDTH / 2, window.innerWidth - TOOLTIP_WIDTH - 8));
+  const placeAbove = y > window.innerHeight * 0.62;
+  return <div role="tooltip" className="pointer-events-none fixed z-50 rounded-lg border border-white/[.12] bg-[#23241f] px-3 py-2.5 text-[#e7e6df] shadow-xl" style={{ left, top: placeAbove ? y - 12 : y + 18, width: TOOLTIP_WIDTH, transform: placeAbove ? 'translateY(-100%)' : undefined }}>
+    <p className="text-[11px] font-medium">{formatDayLabel(day.date)}</p>
+    <dl className="mt-2 space-y-1 text-[10px]">
+      <div className="flex justify-between gap-3"><dt className="text-[#92938a]">Active browsing</dt><dd className="tabular-nums">{formatActivityDuration(day.durationMs)}</dd></div>
+      <div className="flex justify-between gap-3"><dt className="text-[#92938a]">Websites visited</dt><dd className="tabular-nums">{day.websites.length}</dd></div>
+      <div className="flex justify-between gap-3"><dt className="text-[#92938a]">Activity intervals</dt><dd className="tabular-nums">{day.recordCount}</dd></div>
+    </dl>
   </div>;
 }
 
-function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-xl border border-dashed border-white/[.08] px-4 py-8 text-center text-xs text-[#777870]">{children}</p>;
+function SelectedDay({ date, records, websites, totalMs, onShowToday, onClose }: { date: string; records: ActivityRecord[]; websites: WebsiteUsage[]; totalMs: number; onShowToday: () => void; onClose: () => void }) {
+  return <Panel title={formatDayLabel(dateFromKey(date))} subtitle="Your local calendar day">
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <p className="text-2xl font-semibold tracking-[-.03em] tabular-nums">{formatActivityDuration(totalMs)}</p>
+        <p className="text-[10px] text-[#777870]">{websites.length} {websites.length === 1 ? 'website' : 'websites'} · {records.length} {records.length === 1 ? 'interval' : 'intervals'}</p>
+      </div>
+      <div className="flex gap-2">
+        <button type="button" onClick={onShowToday} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#c9ee8e] hover:bg-white/[.04]">Today</button>
+        <button type="button" onClick={onClose} className="rounded-lg border border-white/[.1] px-2.5 py-1.5 text-[10px] text-[#aaa99f] hover:bg-white/[.04]">Close</button>
+      </div>
+    </div>
+    {records.length === 0 ? <Empty>No browsing recorded on this day.</Empty> : <div className="grid gap-5 lg:grid-cols-2">
+      <div>
+        <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-[.12em] text-[#777870]">Websites</h3>
+        <div className="divide-y divide-white/[.06]">{websites.map((site) => <div key={site.domain} className="flex items-center gap-3 py-2"><p className="min-w-0 flex-1 truncate text-xs">{site.domain}</p><span className="text-[10px] text-[#777870]">{site.category}</span><span className="w-16 text-right text-xs tabular-nums text-[#aaa99f]">{formatActivityDuration(site.durationMs)}</span></div>)}</div>
+      </div>
+      <div>
+        <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-[.12em] text-[#777870]">Intervals</h3>
+        <div className="max-h-60 divide-y divide-white/[.06] overflow-y-auto">{records.map((entry) => <div key={entry.id} className="flex items-center gap-3 py-2"><span className="w-16 shrink-0 text-[10px] tabular-nums text-[#777870]">{new Date(entry.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</span><p className="min-w-0 flex-1 truncate text-xs">{entry.domain}</p><span className="text-xs tabular-nums text-[#aaa99f]">{formatActivityDuration(entry.durationMs)}</span></div>)}</div>
+      </div>
+    </div>}
+  </Panel>;
 }
 
-function FocusSessionsView({
-  sessions, records, overrides, refresh,
-}: { sessions: FocusSession[]; records: ActivityRecord[]; overrides: DomainOverride[]; refresh: () => Promise<void> }) {
-  const [goal, setGoal] = useState('Focused work');
-  const [minutes, setMinutes] = useState(25);
-  const [message, setMessage] = useState('');
-  const current = sessions.find((session) => session.status !== 'completed');
-  const begin = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    try {
-      await store.saveFocusSession(startFocusSession(goal, minutes, Date.now()));
-      await browser.alarms.create(FOCUS_SESSION_END_ALARM, { when: Date.now() + minutes * 60_000 });
-      setMessage('Focus session started.');
-      await refresh();
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not start the focus session.'); }
-  };
-  const update = async (operation: 'pause' | 'resume' | 'end') => {
-    if (!current) return;
-    const now = Date.now();
-    const next = operation === 'pause' ? pauseFocusSession(current, now) : operation === 'resume' ? resumeFocusSession(current, now) : endFocusSession(current, now);
-    await store.saveFocusSession(next);
-    if (operation === 'pause' || operation === 'end') await browser.alarms.clear(FOCUS_SESSION_END_ALARM);
-    else await browser.alarms.create(FOCUS_SESSION_END_ALARM, {
-      when: now + Math.max(1_000, current.targetMinutes * 60_000 - focusSessionElapsedMs(next, now)),
-    });
-    setMessage(operation === 'end' ? 'Focus session ended.' : operation === 'pause' ? 'Focus session paused.' : 'Focus session resumed.');
-    await refresh();
-  };
-  return <div className="mt-7 space-y-5">
-    <Panel title="Focus session" subtitle="Only active browser time inside the session is included in its summary">
-      {current ? <div className="rounded-xl border border-[#a9da7b]/20 bg-[#20211d] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-lg font-medium">{current.goal}</p><p className="mt-1 text-xs text-[#85867d]">{current.targetMinutes} minute target · {current.status}</p></div><span className="text-xs text-[#a9da7b]">{duration(summarizeFocusSession(current, records, overrides).focusedMs)} tracked</span></div><div className="mt-4 flex gap-2">{current.status === 'active' ? <button onClick={() => void update('pause')} className="rounded-lg border border-white/[.1] px-3 py-2 text-xs">Pause</button> : <button onClick={() => void update('resume')} className="rounded-lg border border-white/[.1] px-3 py-2 text-xs">Resume</button>}<button onClick={() => void update('end')} className="rounded-lg bg-[#c9ee8e] px-3 py-2 text-xs font-semibold text-[#20251b]">End session</button></div></div> : <form onSubmit={(event) => void begin(event)} className="grid gap-3 sm:grid-cols-[1fr_150px_auto]"><label className="text-[10px] text-[#85867d]">What will you focus on?<input value={goal} onChange={(event) => setGoal(event.target.value)} maxLength={120} required className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label><label className="text-[10px] text-[#85867d]">Target duration<select value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]"><option value={25}>25 minutes</option><option value={50}>50 minutes</option><option value={90}>90 minutes</option><option value={120}>120 minutes</option></select></label><button type="submit" className="self-end rounded-lg bg-[#c9ee8e] px-4 py-2.5 text-xs font-semibold text-[#20251b]">Start focus</button></form>}
-      {message && <p role="status" className="mt-3 text-xs text-[#b3d783]">{message}</p>}
+function WebsiteList({ websites }: { websites: WebsiteUsage[] }) {
+  return <Panel title="Websites" subtitle="Total active time · past 12 months">
+    {websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site, index) => <WebsiteSummaryRow key={site.domain} site={site} index={index} />)}</div> : <Empty>No website activity recorded yet. Visited websites will appear here.</Empty>}
+  </Panel>;
+}
+
+function WebsiteSummaryRow({ site, index }: { site: WebsiteUsage; index: number }) {
+  return <div className="flex items-center gap-3 py-3"><span className="w-5 text-[10px] text-[#686960]">{index + 1}</span><div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">{site.domain}</p><p className="mt-1 text-[10px] text-[#777870]">{site.category}</p></div><span className="shrink-0 text-xs tabular-nums text-[#aaa99f]">{duration(site.durationMs)}</span></div>;
+}
+
+function ActivityView({ records, range, selectedDate, setRange, setSelectedDate }: { records: ActivityRecord[]; range: ActivityRange; selectedDate: string | null; setRange: (range: ActivityRange) => void; setSelectedDate: (date: string) => void }) {
+  const byDate = new Map<string, ActivityRecord[]>();
+  for (const record of records) {
+    const date = new Date(record.startedAt);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    byDate.set(key, [...(byDate.get(key) ?? []), record]);
+  }
+  const groups = [...byDate.entries()].toSorted((left, right) => right[0].localeCompare(left[0]));
+  return <div className="mt-6">
+    <Panel title="Activity timeline" subtitle="Foreground website intervals grouped by your local date">
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        {([['today', 'Today'], ['7', '7 days'], ['30', '30 days'], ['custom', 'Choose date']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setRange(value)} aria-pressed={range === value} className={`rounded-lg px-3 py-2 text-[11px] ${range === value ? 'bg-[#c9ee8e] font-medium text-[#20251b]' : 'border border-white/[.1] text-[#aaa99f] hover:bg-white/[.04]'}`}>{label}</button>)}
+        {range === 'custom' && <input type="date" value={selectedDate ?? todayDateKey(Date.now())} min={todayDateKey(activityHistoryStart(Date.now()))} max={todayDateKey(Date.now())} onChange={(event) => setSelectedDate(event.target.value)} aria-label="Choose activity date" className="rounded-lg border border-white/[.1] bg-[#111210] px-2.5 py-2 text-[11px] text-[#d8d6cc]" />}
+      </div>
+      {groups.length ? <div className="space-y-6">{groups.map(([date, entries]) => <section key={date}><h3 className="mb-2 text-xs font-medium text-[#c9ee8e]">{formatDayLabel(dateFromKey(date))}</h3><div className="divide-y divide-white/[.06]">{entries.map((entry) => <div key={entry.id} className="flex items-center gap-3 py-2.5"><span className="w-16 shrink-0 text-[10px] tabular-nums text-[#777870]">{new Date(entry.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</span><span className="size-1.5 shrink-0 rounded-full bg-[#a9da7b]" /><p className="min-w-0 flex-1 truncate text-xs">{entry.domain}</p><span className="shrink-0 text-xs tabular-nums text-[#aaa99f]">{duration(entry.durationMs)}</span></div>)}</div></section>)}</div> : <Empty>No browsing activity for this date range.</Empty>}
     </Panel>
-    <Panel title="Session history" subtitle="Productive and recreational time use your website classifications">{sessions.length ? <div className="divide-y divide-white/[.06]">{sessions.map((session) => { const summary = summarizeFocusSession(session, records, overrides); return <div key={session.id} className="grid gap-2 py-4 sm:grid-cols-[1fr_auto]"><div><p className="text-sm font-medium">{session.goal}</p><p className="mt-1 text-[10px] text-[#777870]">{new Date(session.startedAt).toLocaleString()} · {session.targetMinutes} min target · {session.status}</p></div><div className="flex gap-4 text-[10px] text-[#85867d]"><span>Focused <b className="ml-1 text-[#d8d6cc]">{duration(summary.focusedMs)}</b></span><span>Productive <b className="ml-1 text-[#b3d783]">{duration(summary.productiveMs)}</b></span><span>Recreational <b className="ml-1 text-[#e6b278]">{duration(summary.recreationalMs)}</b></span></div></div>; })}</div> : <Empty>No focus sessions yet. Start one when you are ready.</Empty>}</Panel>
   </div>;
 }
 
-function SettingsView({ settings, refresh }: { settings: WellbeingSettings; refresh: () => Promise<void> }) {
+function WebsitesView({ websites, sort, setSort, overrides, onSave }: { websites: WebsiteUsage[]; sort: 'most' | 'least' | 'alphabetical'; setSort: (sort: 'most' | 'least' | 'alphabetical') => void; overrides: DomainOverride[]; onSave: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void> }) {
+  return <div className="mt-6"><Panel title="Websites" subtitle="Active time and category · past 12 months">
+    <div className="mb-4 flex items-center justify-between gap-3"><span className="text-[10px] text-[#777870]">{websites.length} domains</span><select aria-label="Sort websites" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="rounded-lg border border-white/[.1] bg-[#111210] px-2.5 py-2 text-[10px] text-[#d8d6cc]"><option value="most">Most time</option><option value="least">Least time</option><option value="alphabetical">A to Z</option></select></div>
+    {websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site) => <WebsiteEditor key={site.domain} site={site} override={overrides.find((item) => item.domain === site.domain)} onSave={onSave} />)}</div> : <Empty>Websites will appear after FocusLens records browsing activity.</Empty>}
+  </Panel></div>;
+}
+
+function WebsiteEditor({ site, override, onSave }: { site: WebsiteUsage; override?: DomainOverride; onSave: (domain: string, category: WebsiteCategory, productivity: ProductivityValue) => Promise<void> }) {
+  const [category, setCategory] = useState(site.category);
+  const [productivity, setProductivity] = useState(site.productivity);
+  const [suggestion, setSuggestion] = useState<AIWebsiteClassification | null>(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setCategory(site.category); setProductivity(site.productivity); }, [site.category, site.productivity]);
+
+  const save = async (nextCategory = category, nextProductivity = productivity) => {
+    setBusy(true);
+    try { await onSave(site.domain, nextCategory, nextProductivity); setMessage('Saved'); setSuggestion(null); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save the category.'); }
+    finally { setBusy(false); }
+  };
+  const requestSuggestion = async () => {
+    setBusy(true);
+    try {
+      const settings = await loadAISettings();
+      if (!settings.enabled) throw new Error('Enable Simple Jev in Settings first.');
+      const result = settings.provider === 'jev'
+        ? await new SimpleJevClassifier(settings).classifyWebsite(site.domain)
+        : await classifyWithConfiguredProvider(settings, site.domain);
+      setSuggestion(result);
+      setMessage('Review the suggestion before saving.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not classify this website.'); }
+    finally { setBusy(false); }
+  };
+  const saveSuggestion = () => suggestion && void save(suggestion.category, defaultProductivityFor(suggestion.category));
+  const updateCategory = (next: WebsiteCategory) => { setCategory(next); setProductivity(next === 'Unknown' ? 'unknown' : defaultProductivityFor(next)); };
+
+  return <div className="grid gap-3 py-4 sm:grid-cols-[minmax(150px,1fr)_130px_100px_auto] sm:items-center">
+    <div className="min-w-0"><p className="truncate text-xs font-medium">{site.domain}</p><p className="mt-1 text-[10px] text-[#777870]">{override ? 'Your category' : 'Suggested default'}</p></div>
+    <select aria-label={`Category for ${site.domain}`} value={category} onChange={(event) => updateCategory(event.target.value as WebsiteCategory)} className="rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-[10px] text-[#d8d6cc]">{CATEGORY_DEFINITIONS.map(({ name }) => <option key={name} value={name}>{name}</option>)}</select>
+    <span className="text-xs tabular-nums text-[#aaa99f]">{duration(site.durationMs)}</span>
+    <div className="flex flex-wrap gap-2">
+      <button type="button" onClick={() => void save()} disabled={busy || (category === site.category && productivity === site.productivity)} className="rounded-lg border border-white/[.1] px-2.5 py-2 text-[10px] disabled:opacity-40">Save</button>
+      {site.category === 'Unknown' && !suggestion && <button type="button" onClick={() => void requestSuggestion()} disabled={busy} className="rounded-lg border border-[#c9ee8e]/20 px-2.5 py-2 text-[10px] text-[#c9ee8e] disabled:opacity-50">{busy ? 'Checking…' : 'Suggest'}</button>}
+      {suggestion && <button type="button" onClick={saveSuggestion} disabled={busy} className="rounded-lg bg-[#c9ee8e] px-2.5 py-2 text-[10px] font-medium text-[#20251b]">Use {suggestion.category} · {Math.round(suggestion.confidence * 100)}%</button>}
+    </div>
+    {(message || suggestion) && <p role="status" className="text-[10px] text-[#b3d783] sm:col-span-4">{message}{suggestion ? ` ${suggestion.reason}` : ''}</p>}
+  </div>;
+}
+
+async function classifyWithConfiguredProvider(settings: AISettings, domain: string): Promise<AIWebsiteClassification> {
+  const key = await loadAIAPIKey();
+  if (!key) throw new Error('Add the provider key in Settings first.');
+  return new AIWebsiteClassifier(settings, key).classify(domain);
+}
+
+function SettingsView({ settings, refresh, clearCachedActivity }: { settings: WellbeingSettings; refresh: () => void; clearCachedActivity: () => void }) {
   const [excludedDraft, setExcludedDraft] = useState('');
   const [message, setMessage] = useState('');
   const [aiSettings, setAiSettings] = useState<AISettings>(DEFAULT_AI_SETTINGS);
   const [aiKey, setAiKey] = useState('');
-  const [aiKeyAvailable, setAiKeyAvailable] = useState(false);
-  useEffect(() => {
-    void Promise.all([loadAISettings(), loadAIAPIKey()]).then(([config, key]) => {
-      setAiSettings(config);
-      setAiKeyAvailable(Boolean(key));
-    });
-  }, []);
+  const [keyAvailable, setKeyAvailable] = useState(false);
+  useEffect(() => { void Promise.all([loadAISettings(), loadAIAPIKey()]).then(([config, key]) => { setAiSettings(config); setKeyAvailable(Boolean(key)); }); }, []);
+
   const save = async (next: WellbeingSettings) => {
-    try {
-      const saved = await saveWellbeingSettings(next);
-      await refresh();
-      setMessage('Settings saved on this device.');
-      return saved;
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save settings.'); return null; }
+    try { await saveWellbeingSettings(next); setMessage('Saved on this device.'); refresh(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save settings.'); }
   };
   const addExcluded = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const saved = await save({ ...settings, excludedDomains: [...settings.excludedDomains, excludedDraft] });
-    if (saved && saved.excludedDomains.length > settings.excludedDomains.length) setExcludedDraft('');
-    else if (saved) setMessage('Enter a valid, new website domain.');
+    const next = await saveWellbeingSettings({ ...settings, excludedDomains: [...settings.excludedDomains, excludedDraft] });
+    if (next.excludedDomains.length > settings.excludedDomains.length) { setExcludedDraft(''); setMessage('Excluded domain saved.'); refresh(); }
+    else setMessage('Enter a valid, new website domain.');
   };
-  const enableBreakReminders = async (checked: boolean) => {
-    if (!checked) { await save({ ...settings, breakReminders: false }); return; }
+  const configureAI = async (enabled: boolean) => {
     try {
-      const granted = await browser.permissions.request({ permissions: ['notifications'] });
-      if (!granted) { setMessage('Notification permission was not granted. Break reminders remain off.'); return; }
-      await save({ ...settings, breakReminders: true });
-    } catch { setMessage('Could not enable notification permission.'); }
-  };
-  const enableDistractionReminders = async (checked: boolean) => {
-    if (!checked) { await save({ ...settings, distractionReminders: false }); return; }
-    try {
-      const granted = await browser.permissions.request({ permissions: ['notifications'] });
-      if (!granted) { setMessage('Notification permission was not granted. Site check-ins remain off.'); return; }
-      await save({ ...settings, distractionReminders: true });
-    } catch { setMessage('Could not enable notification permission.'); }
-  };
-  const saveAIConfiguration = async (enable: boolean) => {
-    try {
-      if (!enable) {
-        const savedSettings = await loadAISettings();
-        const disabledSettings = await saveAISettings({ ...savedSettings, enabled: false });
-        setAiSettings(disabledSettings);
-        setAiKey('');
-        setAiKeyAvailable(false);
-        await browser.permissions.remove({ origins: [aiHostPermissionPattern(savedSettings.endpoint)] });
-        setMessage('Classification suggestions are off. Any API key was cleared from this browser session.');
-        return;
+      const previous = await loadAISettings();
+      if (!enabled) {
+        const saved = await saveAISettings({ ...previous, enabled: false });
+        await browser.permissions.remove({ origins: [aiHostPermissionPattern(previous.endpoint)] });
+        setAiSettings(saved); setKeyAvailable(false); setMessage('Category suggestions are off.'); return;
       }
-      const previousSettings = await loadAISettings();
-      const previousOrigin = aiEndpointOrigin(previousSettings.endpoint);
-      const origin = aiEndpointOrigin(aiSettings.endpoint);
-      if (!aiSettings.model.trim()) throw new Error('Enter a model name.');
-      const secret = aiSettings.provider === 'jev'
-        ? null
-        : aiKey.trim() || (previousSettings.provider === aiSettings.provider ? await loadAIAPIKey() : null);
-      if (aiSettings.provider !== 'jev' && !secret) throw new Error('Enter an API key. The key stays in this browser session.');
+      const secret = aiSettings.provider === 'jev' ? null : aiKey.trim() || (previous.provider === aiSettings.provider ? await loadAIAPIKey() : null);
+      if (aiSettings.provider !== 'jev' && !secret) throw new Error('Enter the provider API key.');
       const permitted = await browser.permissions.request({ origins: [aiHostPermissionPattern(aiSettings.endpoint)] });
-      if (!permitted) throw new Error('Provider permission was not granted. Classification remains off.');
+      if (!permitted) throw new Error('Provider permission was not granted.');
       if (secret) await saveAIAPIKey(secret);
       const saved = await saveAISettings({ ...aiSettings, enabled: true });
-      if (previousOrigin !== origin) await browser.permissions.remove({ origins: [aiHostPermissionPattern(previousSettings.endpoint)] });
-      setAiSettings(saved);
-      setAiKey('');
-      setAiKeyAvailable(Boolean(secret));
-      setMessage('Classification suggestions are enabled. Only the selected hostname or video metadata is sent when you request a suggestion.');
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save AI settings.'); }
+      setAiSettings(saved); setAiKey(''); setKeyAvailable(Boolean(secret));
+      setMessage('Category suggestions enabled. They run only when you request one.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not save classifier settings.'); }
   };
   const exportData = async () => {
     try {
       const [database, localSettings] = await Promise.all([store.exportData(), browser.storage.local.get(null)]);
       const file = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), ...database, settings: localSettings }, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(file);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `focuslens-export-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.append(link);
-      link.click();
-      link.remove();
+      const link = document.createElement('a'); link.href = url; link.download = `focuslens-export-${todayDateKey(Date.now())}.json`; link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-      setMessage('Local activity export downloaded.');
+      setMessage('Activity export downloaded.');
     } catch { setMessage('Could not export local data.'); }
   };
   const deleteData = async () => {
-    if (!window.confirm('Delete all FocusLens activity, YouTube records, sessions, and settings from this browser? This cannot be undone.')) return;
+    if (!window.confirm('Delete all FocusLens activity, categories, and settings from this browser? This cannot be undone.')) return;
     try {
-      const aiConfig = await loadAISettings();
-      await browser.permissions.remove({ origins: [aiHostPermissionPattern(aiConfig.endpoint)] });
-      await browser.permissions.remove({ permissions: ['notifications'] });
+      const ai = await loadAISettings();
+      await browser.permissions.remove({ origins: [aiHostPermissionPattern(ai.endpoint)] });
       await store.clearAllData();
       await Promise.all([browser.storage.local.clear(), browser.storage.session.clear()]);
-      setMessage('All FocusLens data was deleted from this browser.');
-      await refresh();
-    } catch { setMessage('Could not delete all FocusLens data.'); }
+      setMessage('All FocusLens data was deleted.'); clearCachedActivity();
+    } catch { setMessage('Could not delete all local data.'); }
   };
-  return <div className="mt-7 grid gap-5 xl:grid-cols-2">
-    <Panel title="Tracking and goals" subtitle="These settings apply across the extension">
-      <div className="divide-y divide-white/[.06]">
-        <label className="flex items-center justify-between gap-4 py-4"><span><b className="block text-xs font-medium">Pause tracking</b><small className="mt-1 block text-[10px] text-[#777870]">Stop new website and YouTube activity intervals</small></span><input type="checkbox" checked={settings.trackingPaused} onChange={(event) => void save({ ...settings, trackingPaused: event.target.checked })} className="accent-[#a9da7b]" /></label>
-        <form onSubmit={(event) => { event.preventDefault(); void save({ ...settings, dailyGoalMinutes: Number(new FormData(event.currentTarget).get('dailyGoalMinutes')) }); }} className="flex items-center justify-between gap-4 py-4"><label htmlFor="dailyGoalMinutes"><b className="block text-xs font-medium">Daily browsing goal</b><small className="mt-1 block text-[10px] text-[#777870]">A personal target, not a productivity score</small></label><div className="flex items-center gap-2"><input name="dailyGoalMinutes" type="number" min="15" max="1440" defaultValue={settings.dailyGoalMinutes} className="w-20 rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-xs" /><button className="rounded-lg border border-white/[.1] px-2 py-2 text-[10px]">Save</button></div></form>
-        <label className="flex items-center justify-between gap-4 py-4"><span><b className="block text-xs font-medium">Break reminders</b><small className="mt-1 block text-[10px] text-[#777870]">Optional notification during active browsing</small></span><input type="checkbox" checked={settings.breakReminders} onChange={(event) => void enableBreakReminders(event.target.checked)} className="accent-[#a9da7b]" /></label>
-        {settings.breakReminders && <label className="flex items-center justify-between gap-4 py-3 text-xs text-[#aaa99f]">Remind every<select value={settings.breakReminderMinutes} onChange={(event) => void save({ ...settings, breakReminderMinutes: Number(event.target.value) })} className="rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-xs"><option value={20}>20 minutes</option><option value={30}>30 minutes</option><option value={50}>50 minutes</option><option value={60}>60 minutes</option><option value={90}>90 minutes</option></select></label>}
-        <label className="flex items-center justify-between gap-4 border-t border-white/[.06] py-4"><span><b className="block text-xs font-medium">Recreational-site check-ins</b><small className="mt-1 block text-[10px] text-[#777870]">Optional reminder based on your current site classifications</small></span><input type="checkbox" checked={settings.distractionReminders} onChange={(event) => void enableDistractionReminders(event.target.checked)} className="accent-[#a9da7b]" /></label>
-        {settings.distractionReminders && <label className="flex items-center justify-between gap-4 py-3 text-xs text-[#aaa99f]">Remind after<select value={settings.distractionReminderMinutes} onChange={(event) => void save({ ...settings, distractionReminderMinutes: Number(event.target.value) })} className="rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-xs"><option value={10}>10 minutes</option><option value={20}>20 minutes</option><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>60 minutes</option><option value={90}>90 minutes</option><option value={120}>120 minutes</option></select></label>}
-      </div>
-      <h3 className="mt-5 border-t border-white/[.06] pt-4 text-xs font-medium">Excluded domains</h3><p className="mt-1 text-[10px] text-[#777870]">These domains and their subdomains will not be tracked.</p>
-      <form onSubmit={(event) => void addExcluded(event)} className="mt-3 flex gap-2"><input value={excludedDraft} onChange={(event) => setExcludedDraft(event.target.value)} placeholder="example.com" className="min-w-0 flex-1 rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2 text-xs" /><button className="rounded-lg border border-white/[.1] px-3 text-[10px]">Exclude</button></form>
-      <div className="mt-2 space-y-1">{settings.excludedDomains.map((domain) => <div key={domain} className="flex justify-between py-1.5 text-xs text-[#aaa99f]">{domain}<button onClick={() => void save({ ...settings, excludedDomains: settings.excludedDomains.filter((item) => item !== domain) })} className="text-[#c9927e]">Remove</button></div>)}</div>
+
+  return <div className="mt-6 grid gap-4 xl:grid-cols-2">
+    <Panel title="Tracking" subtitle="Choose what FocusLens counts as an active day.">
+      <label className="flex items-center justify-between gap-4 border-b border-white/[.06] py-3"><span><b className="block text-xs font-medium">Pause tracking</b><small className="mt-1 block text-[10px] text-[#777870]">Stop recording new website activity.</small></span><input type="checkbox" checked={settings.trackingPaused} onChange={(event) => void save({ ...settings, trackingPaused: event.target.checked })} className="accent-[#a9da7b]" /></label>
+      <form onSubmit={(event) => { event.preventDefault(); void save({ ...settings, minimumActiveDayMinutes: Number(new FormData(event.currentTarget).get('minimumActiveDayMinutes')) }); }} className="flex items-center justify-between gap-4 border-b border-white/[.06] py-3"><label htmlFor="minimumActiveDayMinutes"><b className="block text-xs font-medium">Minimum for an active day</b><small className="mt-1 block text-[10px] text-[#777870]">Used to calculate your activity streak.</small></label><div className="flex items-center gap-2"><input id="minimumActiveDayMinutes" name="minimumActiveDayMinutes" type="number" min="1" max="60" defaultValue={settings.minimumActiveDayMinutes} className="w-16 rounded-lg border border-white/[.1] bg-[#111210] px-2 py-2 text-xs" /><span className="text-[10px] text-[#777870]">min</span><button className="rounded-lg border border-white/[.1] px-2 py-2 text-[10px]">Save</button></div></form>
+      <form onSubmit={(event) => void addExcluded(event)} className="mt-4 flex gap-2"><input value={excludedDraft} onChange={(event) => setExcludedDraft(event.target.value)} placeholder="Exclude a domain" aria-label="Domain to exclude" className="min-w-0 flex-1 rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2 text-xs" /><button className="rounded-lg border border-white/[.1] px-3 py-2 text-[10px]">Add</button></form>
+      {settings.excludedDomains.length > 0 && <div className="mt-3 divide-y divide-white/[.06]">{settings.excludedDomains.map((domain) => <div key={domain} className="flex items-center justify-between py-2 text-xs text-[#aaa99f]">{domain}<button type="button" onClick={() => void save({ ...settings, excludedDomains: settings.excludedDomains.filter((item) => item !== domain) })} className="text-[10px] text-[#c9ee8e]">Remove</button></div>)}</div>}
+      <p className="mt-4 text-[10px] text-[#777870]">Change a website’s category from the Websites page. YouTube activity continues to count under youtube.com.</p>
     </Panel>
-    <Panel title="Your local data" subtitle="Export a copy or clear the data stored by FocusLens">
-      <p className="text-xs leading-5 text-[#aaa99f]">FocusLens keeps activity, video metadata, focus sessions, and rules on this device. If you request a hosted category suggestion, only the selected hostname or video metadata is sent to that provider. A local Simple Jev endpoint keeps those requests on this device.</p>
-      <div className="mt-5 flex flex-wrap gap-2"><button onClick={() => void exportData()} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Export local data</button><button onClick={() => void deleteData()} className="rounded-lg border border-[#bd765d]/30 px-3 py-2.5 text-xs text-[#d79880]">Delete all FocusLens data</button></div>
+    <Panel title="Optional Simple Jev suggestions" subtitle="Suggestions are manual and never change a category until you accept it.">
+      <p className="mb-4 text-[10px] leading-5 text-[#aaa99f]">The hosted Featherless demo is the default and requires an internet connection. It does not need an API key. Only the hostname you choose is sent. The demo is rate limited; wait and retry manually.</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-[10px] text-[#85867d]">Provider<select value={aiSettings.provider} onChange={(event) => { const provider = event.target.value as AISettings['provider']; setAiSettings((current) => ({ ...current, provider, endpoint: AI_PROVIDER_ENDPOINTS[provider], model: provider === 'jev' ? DEFAULT_AI_SETTINGS.model : '' })); }} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]">{AI_PROVIDERS.map((provider) => <option key={provider} value={provider}>{provider === 'jev' ? 'Simple Jev' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : 'OpenAI'}</option>)}</select></label>
+        <label className="text-[10px] text-[#85867d]">Model<input value={aiSettings.model} onChange={(event) => setAiSettings((current) => ({ ...current, model: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
+        <label className="text-[10px] text-[#85867d] sm:col-span-2">API endpoint<input value={aiSettings.endpoint} onChange={(event) => setAiSettings((current) => ({ ...current, endpoint: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
+        {aiSettings.provider !== 'jev' && <label className="text-[10px] text-[#85867d] sm:col-span-2">API key<input type="password" autoComplete="off" value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder={keyAvailable ? 'Key set for this browser session' : 'Enter provider key'} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>}
+      </div>
+      <div className="mt-4 flex items-center gap-3"><button type="button" onClick={() => void configureAI(true)} className="rounded-lg bg-[#c9ee8e] px-3 py-2.5 text-xs font-semibold text-[#20251b]">Enable and save</button>{aiSettings.enabled && <button type="button" onClick={() => void configureAI(false)} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Disable</button>}<span className="text-[10px] text-[#777870]">{aiSettings.enabled ? 'Enabled for manual suggestions' : 'Off'}</span></div>
+    </Panel>
+    <Panel title="Your data" subtitle="Activity, website categories, and settings are stored locally.">
+      <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void exportData()} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Export activity</button><button type="button" onClick={() => void deleteData()} className="rounded-lg border border-[#bd765d]/30 px-3 py-2.5 text-xs text-[#d79880]">Delete all data</button></div>
       {message && <p role="status" className="mt-4 text-xs text-[#b3d783]">{message}</p>}
     </Panel>
-    <div className="xl:col-span-2">
-      <Panel title="Optional category suggestions" subtitle="Disabled by default. Suggestions run only when you request them for one website or video.">
-        <p className="rounded-xl border border-[#d8bd79]/20 bg-[#d8bd79]/[.05] p-3 text-[11px] leading-5 text-[#cfc6a1]">Suggestions run only when you request them for one Unknown website or video, and never change reports until accepted. Simple Jev connects to an open source classifier endpoint (default: http://127.0.0.1:8000/v1/classifier) and does not require an API key. Only the selected hostname or video title, channel, and Shorts flag are sent. Hosted Gemini, Grok, and OpenAI providers receive the same selected metadata under their own data policies; their key stays in this browser session.</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label className="text-[10px] text-[#85867d]">Provider<select value={aiSettings.provider} onChange={(event) => { const provider = event.target.value as AISettings['provider']; setAiSettings((current) => ({ ...current, provider, endpoint: AI_PROVIDER_ENDPOINTS[provider] })); }} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]">{AI_PROVIDERS.map((provider) => <option key={provider} value={provider}>{provider === 'jev' ? 'Simple Jev (open source)' : provider === 'gemini' ? 'Google Gemini' : provider === 'grok' ? 'xAI Grok' : 'OpenAI'}</option>)}</select></label>
-          <label className="text-[10px] text-[#85867d]">Model<input value={aiSettings.model} onChange={(event) => setAiSettings((current) => ({ ...current, model: event.target.value }))} placeholder={aiSettings.provider === 'jev' ? 'Model ID served by Simple Jev' : aiSettings.provider === 'gemini' ? 'Gemini model name from AI Studio' : aiSettings.provider === 'grok' ? 'Grok model name from xAI Console' : 'OpenAI model name'} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
-          <label className="text-[10px] text-[#85867d] sm:col-span-2">API endpoint<input value={aiSettings.endpoint} onChange={(event) => setAiSettings((current) => ({ ...current, endpoint: event.target.value }))} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7]" /></label>
-          {aiSettings.provider !== 'jev' && <label className="text-[10px] text-[#85867d] sm:col-span-2">API key<input type="password" autoComplete="off" value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder={aiKeyAvailable ? 'Key is set for this browser session · enter to replace' : 'Enter key · not stored across browser restarts'} className="mt-1.5 w-full rounded-lg border border-white/[.1] bg-[#111210] px-3 py-2.5 text-xs text-[#e2e0d7] placeholder:text-[#626159]" /></label>}
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2"><button onClick={() => void saveAIConfiguration(true)} className="rounded-lg bg-[#c9ee8e] px-3 py-2.5 text-xs font-semibold text-[#20251b]">Enable and save</button>{aiSettings.enabled && <button onClick={() => void saveAIConfiguration(false)} className="rounded-lg border border-white/[.1] px-3 py-2.5 text-xs">Disable suggestions</button>}<span className="self-center text-[10px] text-[#777870]">{aiSettings.enabled ? aiSettings.provider === 'jev' ? 'Ready · Simple Jev endpoint' : aiKeyAvailable ? 'Ready for manual suggestions' : 'Enabled · API key needs re-entry' : 'Off'}</span></div>
-        {message && <p role="status" className="mt-3 text-xs text-[#b3d783]">{message}</p>}
-      </Panel>
-    </div>
   </div>;
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="rounded-xl border border-dashed border-white/[.08] px-4 py-8 text-center text-xs text-[#777870]">{children}</p>;
 }

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { classifyDomain } from '../src/classification/classify-domain';
 import { normalizeDomain } from '../src/classification/normalize-domain';
-import { summarizeWebsiteTime } from '../src/classification/productivity-summary';
 import { deleteDomainOverride, DOMAIN_OVERRIDES_STORAGE_KEY, loadDomainOverrides, parseDomainOverrides, saveDomainOverride } from '../src/classification/settings-store';
 
 beforeEach(async () => {
@@ -56,29 +55,4 @@ describe('website classification', () => {
     expect(await loadDomainOverrides()).toEqual([]);
   });
 
-  it('aggregates stored time by category and excludes unknown time from the ratio', () => {
-    const summary = summarizeWebsiteTime([
-      { domain: 'khanacademy.org', durationMs: 100 },
-      { domain: 'youtube.com', durationMs: 200 },
-      { domain: 'steamcommunity.com', durationMs: 100 },
-      { domain: 'unlisted.example', durationMs: 50 },
-      { domain: 'reddit.com', durationMs: -1 },
-    ]);
-    expect(summary).toMatchObject({
-      productiveMs: 100,
-      neutralMs: 200,
-      recreationalMs: 100,
-      unknownMs: 50,
-      classifiedMs: 400,
-      productivityRatio: 0.25,
-    });
-    expect(summary.categoryMs.Entertainment).toBe(200);
-    expect(summary.categoryMs.Gaming).toBe(100);
-    expect(summary.categoryMs.Unknown).toBe(50);
-  });
-
-  it('returns no ratio when there is no classified browsing time', () => {
-    expect(summarizeWebsiteTime([]).productivityRatio).toBeNull();
-    expect(summarizeWebsiteTime([{ domain: 'unlisted.example', durationMs: 10 }]).productivityRatio).toBeNull();
-  });
 });
