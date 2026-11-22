@@ -13,6 +13,7 @@ import { AI_PROVIDER_ENDPOINTS, DEFAULT_AI_SETTINGS, aiHostPermissionPattern, lo
 import { AI_PROVIDERS } from '../../src/ai/types';
 import { AIWebsiteClassifier, type AIWebsiteClassification } from '../../src/ai/website-provider';
 import { SimpleJevClassifier } from '../../src/ai/simple-jev';
+import { fetchFromExtensionWorker } from '../../src/ai/extension-fetch';
 import { isBrowserExtensionContext } from '../../src/tracking/extension-context';
 
 type View = 'Overview' | 'Activity' | 'Websites' | 'Categories' | 'Settings';
@@ -380,11 +381,15 @@ function WebsiteEditor({ site, override, onSave }: { site: WebsiteUsage; overrid
   };
   const requestSuggestion = async () => {
     setBusy(true);
+    setMessage('Starting category suggestion…');
+    setSuggestion(null);
     try {
       const settings = await loadAISettings();
       if (!settings.enabled) throw new Error('Enable Simple Jev in Settings first.');
+      const hasHostAccess = await browser.permissions.contains({ origins: [aiHostPermissionPattern(settings.endpoint)] });
+      if (!hasHostAccess) throw new Error('FocusLens does not have access to the Simple Jev host. Open Settings, select Enable and save, and allow host access.');
       const result = settings.provider === 'jev'
-        ? await new SimpleJevClassifier(settings).classifyWebsite(site.domain)
+        ? await new SimpleJevClassifier(settings, fetchFromExtensionWorker).classifyWebsite(site.domain)
         : await classifyWithConfiguredProvider(settings, site.domain);
       setSuggestion(result);
       setMessage('Review the suggestion before saving.');
@@ -403,7 +408,7 @@ function WebsiteEditor({ site, override, onSave }: { site: WebsiteUsage; overrid
       {site.category === 'Unknown' && !suggestion && <button type="button" onClick={() => void requestSuggestion()} disabled={busy} className="rounded-lg border border-[#c9ee8e]/20 px-2.5 py-2 text-[10px] text-[#c9ee8e] disabled:opacity-50">{busy ? 'Checking…' : 'Suggest'}</button>}
       {suggestion && <button type="button" onClick={saveSuggestion} disabled={busy} className="rounded-lg bg-[#c9ee8e] px-2.5 py-2 text-[10px] font-medium text-[#20251b]">Use {suggestion.category} · {Math.round(suggestion.confidence * 100)}%</button>}
     </div>
-    {(message || suggestion) && <p role="status" className="text-[10px] text-[#b3d783] sm:col-span-4">{message}{suggestion ? ` ${suggestion.reason}` : ''}</p>}
+    {(message || suggestion) && <p role="status" aria-live="polite" className={`text-[10px] sm:col-span-4 ${message.startsWith('Could not') || message.startsWith('Enable ') ? 'text-[#e4ac97]' : 'text-[#b3d783]'}`}>{message}{suggestion ? ` ${suggestion.reason}` : ''}</p>}
   </div>;
 }
 

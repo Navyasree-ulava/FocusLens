@@ -136,6 +136,34 @@ export default defineBackground(() => {
   browser.runtime.onInstalled.addListener(() => void enqueue(initialize));
   browser.runtime.onStartup.addListener(() => void enqueue(initialize));
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message && typeof message === 'object' && 'type' in message && message.type === 'focuslens-ai-fetch') {
+      const extensionRoot = browser.runtime.getURL('');
+      if (!sender.url?.startsWith(extensionRoot) || sender.tab?.incognito) return false;
+      const request = message as { url?: unknown; method?: unknown; headers?: unknown; body?: unknown };
+      if (typeof request.url !== 'string' || request.method !== 'POST' || typeof request.body !== 'string') return false;
+      const body = request.body;
+      let endpoint: URL;
+      try { endpoint = new URL(request.url); }
+      catch { sendResponse({ error: 'Simple Jev endpoint URL is invalid.' }); return true; }
+      if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+        sendResponse({ error: 'Simple Jev endpoint must be a clean HTTPS URL.' }); return true;
+      }
+      void browser.permissions.contains({ origins: [`${endpoint.origin}/*`] }).then(async (hasAccess) => {
+        if (!hasAccess) { sendResponse({ error: 'FocusLens does not have access to the Simple Jev host. Enable it in Settings first.' }); return; }
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          });
+          sendResponse({ status: response.status, body: await response.text() });
+        } catch {
+          sendResponse({ error: 'The FocusLens background worker could not connect to Simple Jev. Check the connection or try again later.' });
+        }
+      }).catch(() => sendResponse({ error: 'FocusLens could not verify access to the Simple Jev host. Reload the extension.' }));
+      return true;
+    }
+
     const parsed = youtubeContentMessageSchema.safeParse(message);
     const senderUrl = sender.url ?? sender.tab?.url;
     if (!parsed.success || sender.tab?.id === undefined || sender.tab.incognito) return false;
