@@ -1,42 +1,103 @@
-# FocusLens
+# FocusLens 🎯
 
-FocusLens is a local-first browser extension that shows where your active browsing time goes. It supports Chrome, Edge, and Brave. Activity records and settings stay in the browser profile; FocusLens does not collect page paths, searches, or browsing history.
+### Understand your browsing habits. Take control of your focus.
 
-## What it does
+FocusLens is a local-first browser activity tracker for Chrome, Microsoft Edge, and Brave. It records active browsing time, groups related subdomains under one root website, and shows activity in a dashboard so you can better understand your online habits.
 
-- Tracks the active website while the browser is focused and you are not idle.
-- Combines subdomains under their registered domain (for example, `mail.google.com` and `drive.google.com` become `google.com`).
-- Removes overlapping intervals before calculating totals.
-- Shows daily activity, a 12-month calendar, website totals, category totals, and a timeline.
-- Lets you correct a website category and optionally request a category suggestion.
-- Stores activity in IndexedDB and preferences in browser storage.
+FocusLens is designed to keep activity on your device. It stores tracking data in IndexedDB and settings in browser storage. It does not collect page paths, searches, or browsing history.
 
-YouTube contributes to website activity as `youtube.com`. Category suggestions are manual: FocusLens only sends the selected hostname, or selected video title/channel/Shorts flag, to the provider after you request a suggestion. You must accept a suggestion before it changes a category.
+---
 
-## Install for development
+## ✨ Why FocusLens?
 
-Requirements: Node.js 22 or newer, npm, and a Chromium based browser.
+Time online can mean many things: studying, coding, communicating, shopping, or taking a break. A simple list of visits can make the same website appear repeatedly and obscure the bigger picture.
+
+FocusLens combines local activity tracking, root-domain grouping, built-in website categories, and optional AI suggestions to make browsing summaries easier to interpret. Suggestions are always manual: FocusLens only contacts a classification provider after you request a suggestion.
+
+## 🚀 Features
+
+### 📊 Browsing activity analytics
+
+- Track time on the active website while the browser window is focused and you are not idle.
+- Group subdomains under their registrable root domain using the Public Suffix List. For example, `mail.google.com` and `drive.google.com` are grouped as `google.com`.
+- Aggregate repeated visits and remove overlapping intervals before calculating activity totals.
+- View a 12-month activity calendar, daily totals, a timeline, and website usage summaries.
+- Inspect a selected day's website totals and individual activity intervals.
+- See current and longest activity streaks.
+- View time by website category and sort website activity by time or name.
+
+### 🗂️ Website categories
+
+FocusLens assigns conservative default categories to known domains. Mixed-use sites can be categorized as neutral, and unknown sites remain **Unknown** until you choose a category or accept a suggestion. You can change a website's category from the **Websites** page; your choice is stored locally.
+
+### 🧠 Optional Jev category suggestions
+
+FocusLens integrates the open-source [Simple Jev](https://github.com/featherless-ai/simple-jev) classification API. When enabled, you can manually request a category suggestion for an unknown website. FocusLens does not apply the suggestion until you accept it.
+
+The default configuration uses the hosted Featherless demo endpoint and the `featherless-ai/Qwen3.6-35B-A3B-classifier` model. It requires an internet connection and does not require an API key. The public demo may be rate limited. You can also configure compatible providers in Settings; API keys for those providers are stored in browser session storage and cleared when the browser session ends.
+
+Only the selected hostname is sent for a website suggestion. No activity history, URL path, or search query is sent. Suggestions are estimates and can be wrong.
+
+### 📈 Dashboard and popup
+
+- **Overview:** today's totals, top websites, streaks, and the activity calendar.
+- **Activity:** daily timeline with date range filters.
+- **Websites:** aggregated time, categories, category editing, and optional suggestions.
+- **Categories:** time and website counts grouped by category.
+- **Settings:** tracking preferences, optional classifiers, and local data export or deletion.
+- **Popup:** current tracking status and today's active browsing time.
+
+YouTube playback contributes to activity under `youtube.com`. Video-level category analytics are not currently part of the dashboard.
+
+## 🛠️ Technology and development tools
+
+- **React 19** and **TypeScript** for the dashboard and popup.
+- **Tailwind CSS 4** for styling.
+- **WXT** and **Vite** for browser-extension development and builds.
+- **IndexedDB** and Chromium extension storage for local activity and settings.
+- **tldts** for Public Suffix List-based root-domain grouping.
+- **Simple Jev** and optional Gemini, Grok, or OpenAI-compatible classification providers.
+- **Vitest** for unit tests, **ESLint** for linting, and **TypeScript** for type checking.
+- **npm** for dependency and script management; **Git** for version control.
+
+## 🧰 Set up from a clone
+
+### Requirements
+
+- Git
+- Node.js 22 or newer
+- npm (included with Node.js)
+- Chrome, Edge, or Brave
+
+### Clone and install
 
 ```sh
+git clone <repository-url>
+cd FocusLens
 npm install
+```
+
+Replace `<repository-url>` with the URL of your FocusLens Git repository. If you downloaded the project as a ZIP instead, extract it and open a terminal in the extracted `FocusLens` folder.
+
+### Run the development build
+
+```sh
 npm run dev
 ```
 
-For a production build, run `npm run build`, then open `chrome://extensions` (or `edge://extensions` / `brave://extensions`), enable Developer mode, select **Load unpacked**, and choose `.output/chrome-mv3`.
+WXT starts a development build and prints its output location. Load the generated unpacked extension in your browser. For Edge, use `npm run dev:edge`.
 
-The extension needs access to tabs to read the active tab's hostname, idle state to pause tracking while you are away, alarms for durable checkpoints, and storage for local records.
+### Build and load the production extension
 
-## Simple Jev suggestions
+```sh
+npm run build
+```
 
-Simple Jev is the default provider. In the dashboard, open **Settings**, leave the provider as **Simple Jev**, and select **Enable and save**. It uses the hosted demo endpoint and model by default, requires internet access, and does not require an API key. The demo can be rate limited.
+In Chrome, open `chrome://extensions`; in Edge, open `edge://extensions`; in Brave, open `brave://extensions`. Turn on **Developer mode**, choose **Load unpacked**, and select the generated `.output/chrome-mv3` folder. Reload the extension after rebuilding it, then refresh any open FocusLens dashboard tab.
 
-To try it, open **Websites**, find an entry categorized **Unknown**, select **Suggest**, review the returned category, then select the accept button to save it. This request sends only the hostname. A suggestion is not guaranteed to be correct.
+FocusLens uses tab access to identify the active website's hostname, idle and alarm APIs to pause and checkpoint tracking, and local storage to save records and settings. The extension requests access to a classification host only when you enable a provider in Settings.
 
-The live hosted endpoint was checked on 22 November 2026 with a sample `github.com` request and returned HTTP 200 with a valid category response. To check it yourself, enable Simple Jev as above and request a suggestion for an Unknown site. A rate-limit or connection message means the service could not complete that request; retry later or check your connection and endpoint/model settings.
-
-Gemini, Grok, and OpenAI providers are also available with an endpoint, model, and API key. API keys are kept in browser session storage and cleared when the browser session ends.
-
-## Checks
+## ✅ Run checks
 
 ```sh
 npm run typecheck
@@ -45,8 +106,17 @@ npm test
 npm run build
 ```
 
-## Manual check
+## 🔎 Try it in the browser
 
-After loading or reloading the unpacked extension, open a few sites and switch between tabs and subdomains. Verify the Websites and Categories views show one aggregated root-domain total. Check the Activity view for individual intervals, pause tracking in Settings, and verify a requested category suggestion is only saved after you accept it.
+1. Load or reload the unpacked extension, then open a few websites in regular tabs.
+2. Switch between tabs and subdomains; check that the website summary groups them together and adds their time.
+3. Open the dashboard and review **Overview**, **Activity**, **Websites**, and **Categories**.
+4. In Settings, enable Simple Jev. Accept the host access prompt.
+5. On **Websites**, choose **Suggest** for an **Unknown** site, review the result, and accept it only if it looks appropriate.
+6. Pause tracking in Settings and confirm that new activity stops being recorded.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation details.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the code structure and data flow.
+
+---
+
+**FocusLens — Make every minute online count.**
