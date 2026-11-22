@@ -15,7 +15,7 @@ import { AIWebsiteClassifier, type AIWebsiteClassification } from '../../src/ai/
 import { SimpleJevClassifier } from '../../src/ai/simple-jev';
 import { isBrowserExtensionContext } from '../../src/tracking/extension-context';
 
-type View = 'Overview' | 'Activity' | 'Websites' | 'Settings';
+type View = 'Overview' | 'Activity' | 'Websites' | 'Categories' | 'Settings';
 type ActivityRange = 'today' | '7' | '30' | 'custom';
 
 interface DashboardData {
@@ -201,6 +201,7 @@ export default function App() {
         </div>}
         {view === 'Activity' && <ActivityView records={visibleActivity} range={activityRange} selectedDate={selectedDate} setRange={setActivityRange} setSelectedDate={setSelectedDate} />}
         {view === 'Websites' && <WebsitesView websites={sortedSites} sort={siteSort} setSort={setSiteSort} overrides={data.overrides} onSave={async (domain, category, productivity) => { await saveDomainOverride({ domain, category, productivity }); refresh(); }} />}
+        {view === 'Categories' && <CategoriesView websites={data.websites} />}
         {view === 'Settings' && <SettingsView settings={data.wellbeing} refresh={refresh} clearCachedActivity={() => { recordsCache.current = null; streakDaysCache.current = null; refresh(); }} />}
       </>}
       <footer className="mt-10 border-t border-white/[.07] py-5 text-center text-[10px] text-[#67685f]">Daily totals count foreground browsing once and use your local calendar day.</footer>
@@ -213,7 +214,7 @@ function Brand() {
 }
 
 function Navigation({ view, setView, vertical = false }: { view: View; setView: (view: View) => void; vertical?: boolean }) {
-  const items: View[] = ['Overview', 'Activity', 'Websites', 'Settings'];
+  const items: View[] = ['Overview', 'Activity', 'Websites', 'Categories', 'Settings'];
   return <nav className={`${vertical ? 'mt-3 space-y-1' : 'mt-4 flex gap-2 overflow-auto lg:hidden'}`} aria-label="Main navigation">
     {items.map((item) => <button key={item} type="button" onClick={() => setView(item)} aria-current={view === item ? 'page' : undefined}
       className={`${vertical ? 'flex w-full items-center gap-3 text-left' : 'shrink-0'} rounded-lg px-3 py-2.5 text-sm ${view === item ? 'bg-[#252720] text-[#d8eab7]' : 'text-[#92938a] hover:bg-white/[.03]'}`}>{item}</button>)}
@@ -347,6 +348,19 @@ function WebsitesView({ websites, sort, setSort, overrides, onSave }: { websites
   return <div className="mt-6"><Panel title="Websites" subtitle="Active time and category · past 12 months">
     <div className="mb-4 flex items-center justify-between gap-3"><span className="text-[10px] text-[#777870]">{websites.length} domains</span><select aria-label="Sort websites" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="rounded-lg border border-white/[.1] bg-[#111210] px-2.5 py-2 text-[10px] text-[#d8d6cc]"><option value="most">Most time</option><option value="least">Least time</option><option value="alphabetical">A to Z</option></select></div>
     {websites.length ? <div className="divide-y divide-white/[.06]">{websites.map((site) => <WebsiteEditor key={site.domain} site={site} override={overrides.find((item) => item.domain === site.domain)} onSave={onSave} />)}</div> : <Empty>Websites will appear after FocusLens records browsing activity.</Empty>}
+  </Panel></div>;
+}
+
+function CategoriesView({ websites }: { websites: WebsiteUsage[] }) {
+  const totals = new Map<WebsiteCategory, { durationMs: number; sites: number }>();
+  for (const site of websites) {
+    const current = totals.get(site.category) ?? { durationMs: 0, sites: 0 };
+    totals.set(site.category, { durationMs: current.durationMs + site.durationMs, sites: current.sites + 1 });
+  }
+  const rows = CATEGORY_DEFINITIONS.map(({ name }) => ({ name, ...(totals.get(name) ?? { durationMs: 0, sites: 0 }) })).filter((row) => row.sites > 0).toSorted((a, b) => b.durationMs - a.durationMs);
+  const total = rows.reduce((sum, row) => sum + row.durationMs, 0);
+  return <div className="mt-6"><Panel title="Categories" subtitle="Browsing time grouped by category · past 12 months">
+    {rows.length ? <div className="space-y-4">{rows.map((row) => <div key={row.name}><div className="mb-1 flex justify-between gap-3 text-xs"><span>{row.name} <span className="text-[#777870]">· {row.sites} {row.sites === 1 ? 'site' : 'sites'}</span></span><span className="tabular-nums text-[#c9ee8e]">{duration(row.durationMs)}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-white/[.06]"><div className="h-full rounded-full bg-[#a9da7b]" style={{ width: `${Math.max(2, row.durationMs / total * 100)}%` }} /></div></div>)}</div> : <Empty>Categories will appear after FocusLens records browsing activity.</Empty>}
   </Panel></div>;
 }
 

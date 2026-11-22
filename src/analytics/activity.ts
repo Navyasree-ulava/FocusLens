@@ -51,8 +51,9 @@ export function formatActivityDuration(durationMs: number): string {
   const totalMinutes = Math.floor(milliseconds / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  if (!hours) return `${minutes}m`;
-  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  const seconds = Math.floor(milliseconds / 1_000) % 60;
+  if (!hours) return `${minutes}m${seconds ? ` ${seconds}s` : ''}`;
+  return `${hours}h${minutes ? ` ${minutes}m` : ''}`;
 }
 
 export function formatDayLabel(timestamp: number): string {

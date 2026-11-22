@@ -1,38 +1,42 @@
 # FocusLens
 
-FocusLens is a local-first Chromium browser extension for understanding browsing patterns. It targets Chrome, Microsoft Edge, and Brave, with no account, backend, or browsing-history uploads.
+FocusLens is a local-first browser extension that shows where your active browsing time goes. It supports Chrome, Edge, and Brave. Activity records and settings stay in the browser profile; FocusLens does not collect page paths, searches, or browsing history.
 
-## Current status
+## What it does
 
-FocusLens tracks foreground website and YouTube activity locally and presents four sections: **Overview**, **Activity**, **Websites**, and **Settings**. Overview shows today's active browsing time, today's website count and most-visited site, the current and all-time longest active-day streak, a 12-month GitHub-style activity heatmap, and the top websites. Hovering a heatmap day shows its exact date, active browsing duration, and website count; selecting a day shows that day's total, websites, and individual intervals. The popup shows today's active total and current tracking status. Focus sessions, learning goals, Insights, browsing-intent ratios, and the separate YouTube analytics view were removed; YouTube activity still counts under `youtube.com` in the activity timeline and website ranking. Website intervals and YouTube segments live in IndexedDB; rules and preferences live in `chrome.storage.local`. Website paths and searches are not collected.
+- Tracks the active website while the browser is focused and you are not idle.
+- Combines subdomains under their registered domain (for example, `mail.google.com` and `drive.google.com` become `google.com`).
+- Removes overlapping intervals before calculating totals.
+- Shows daily activity, a 12-month calendar, website totals, category totals, and a timeline.
+- Lets you correct a website category and optionally request a category suggestion.
+- Stores activity in IndexedDB and preferences in browser storage.
 
-Coding, social media, professional work, and communication default to neutral intent. YouTube is categorized as Entertainment while its website-level intent stays neutral until individual videos are classified in Phase 3. Unknown domains remain unknown until the user adds a rule.
+YouTube contributes to website activity as `youtube.com`. Category suggestions are manual: FocusLens only sends the selected hostname, or selected video title/channel/Shorts flag, to the provider after you request a suggestion. You must accept a suggestion before it changes a category.
 
-Typecheck, lint, unit tests, and the Chrome MV3 build are the release checks. Run them before loading the unpacked extension.
+## Install for development
 
-## Optional category suggestions
-
-Open the dashboard's **Settings** view to configure optional classification. For the open source [Simple Jev](https://github.com/featherless-ai/simple-jev) provider, FocusLens defaults to Featherless' hosted demo at `https://simple-jev-demo-api.featherless.ai/v1/classifier` and the served model `featherless-ai/Qwen3.6-35B-A3B-classifier`. It needs an internet connection and no API key. The public demo is rate limited; wait and manually request the suggestion again if limited. You can edit the endpoint and model in Settings to use another HTTPS Simple Jev server. Gemini, Grok, and OpenAI remain available with a model name and API key. Keys stay in browser session storage and are cleared when the browser closes.
-
-Suggestions never run automatically. On **Websites** or **YouTube**, request one suggestion, review it, and accept it before it changes a saved category. Simple Jev sends only the selected hostname or the selected video's title, channel name, and Shorts flag to the configured endpoint. Its scores are not calibrated probabilities and do not guarantee a correct label, so treat them as suggestions.
-
-## Requirements
-
-- Node.js 22 or newer and npm
-- Chrome, Edge, or Brave for loading the extension
-
-## Setup
+Requirements: Node.js 22 or newer, npm, and a Chromium based browser.
 
 ```sh
 npm install
 npm run dev
 ```
 
-For an unpacked production build, use `npm run build`, then load `.output/chrome-mv3` from the browser's extension page. Chrome: `chrome://extensions`; Edge: `edge://extensions`; Brave: `brave://extensions`. Turn on Developer mode and select **Load unpacked**.
+For a production build, run `npm run build`, then open `chrome://extensions` (or `edge://extensions` / `brave://extensions`), enable Developer mode, select **Load unpacked**, and choose `.output/chrome-mv3`.
 
-Tracking requires the `tabs`, `idle`, and `alarms` permissions in addition to `storage`. FocusLens uses these to identify the active tab's domain, detect focus/idle transitions, checkpoint local activity, and persist state. It does not read page paths or transmit data.
+The extension needs access to tabs to read the active tab's hostname, idle state to pause tracking while you are away, alarms for durable checkpoints, and storage for local records.
 
-## Quality checks
+## Simple Jev suggestions
+
+Simple Jev is the default provider. In the dashboard, open **Settings**, leave the provider as **Simple Jev**, and select **Enable and save**. It uses the hosted demo endpoint and model by default, requires internet access, and does not require an API key. The demo can be rate limited.
+
+To try it, open **Websites**, find an entry categorized **Unknown**, select **Suggest**, review the returned category, then select the accept button to save it. This request sends only the hostname. A suggestion is not guaranteed to be correct.
+
+The live hosted endpoint was checked on 22 November 2026 with a sample `github.com` request and returned HTTP 200 with a valid category response. To check it yourself, enable Simple Jev as above and request a suggestion for an Unknown site. A rate-limit or connection message means the service could not complete that request; retry later or check your connection and endpoint/model settings.
+
+Gemini, Grok, and OpenAI providers are also available with an endpoint, model, and API key. API keys are kept in browser session storage and cleared when the browser session ends.
+
+## Checks
 
 ```sh
 npm run typecheck
@@ -41,8 +45,8 @@ npm test
 npm run build
 ```
 
-## Manual browser check
+## Manual check
 
-Reload the unpacked extension after building. Open the popup from a regular HTTPS tab and confirm it reports **Tracking** and that today's total advances. Open the dashboard from the popup and confirm Overview shows today's time, website count, most visited website, current streak, and the heatmap. Hover heatmap cells to check the date, active browsing, and website count; select a day and confirm its websites and intervals appear, then use **Today** and **Close**. Switch tabs while browsing and confirm time is not lost, then check the Activity filters and Websites sorting. Change a website's category, reload the dashboard, and confirm it persists. Confirm YouTube playback still accrues time under `youtube.com`.
+After loading or reloading the unpacked extension, open a few sites and switch between tabs and subdomains. Verify the Websites and Categories views show one aggregated root-domain total. Check the Activity view for individual intervals, pause tracking in Settings, and verify a requested category suggestion is only saved after you accept it.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md), and [TODO.md](TODO.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation details.
